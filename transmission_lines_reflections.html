@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transmission Line Reflections - Time Domain Focus</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc; }
+        canvas { user-select: none; }
+    </style>
+</head>
+<body class="p-6 text-slate-800">
+
+    <div class="max-w-6xl mx-auto bg-white p-6 rounded-xl shadow-lg border border-slate-200">
+        
+        <div class="mb-4 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+            <div>
+                <h1 class="text-2xl font-bold text-slate-900">Transmission Line Reflections</h1>
+                <p class="text-sm text-slate-600">Continuous Time Oscilloscope View</p>
+            </div>
+            <div class="flex gap-4">
+                <div class="text-right bg-indigo-50 px-4 py-2 rounded border border-indigo-100 min-w-[140px]">
+                    <p class="text-xs text-indigo-600 font-bold uppercase">Active Edge</p>
+                    <p id="active-wave-display" class="text-xl font-bold text-slate-800">0.000 V</p>
+                </div>
+                <div class="text-right bg-blue-50 px-4 py-2 rounded border border-blue-100 min-w-[140px]">
+                    <p class="text-xs text-blue-600 font-bold uppercase">Steady State V</p>
+                    <p id="v-steady-display" class="text-xl font-bold text-slate-800">5.000 V</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 bg-slate-50 p-4 rounded-lg border border-slate-200">
+            <div>
+                <label class="block text-xs font-semibold uppercase text-slate-500 mb-1">V Low (V)</label>
+                <input type="number" id="vlow-input" value="0" step="0.5" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
+            </div>
+            <div>
+                <label class="block text-xs font-semibold uppercase text-slate-500 mb-1">V High (V)</label>
+                <input type="number" id="vhigh-input" value="5" step="0.5" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
+            </div>
+            <div>
+                <label class="block text-xs font-semibold uppercase text-slate-500 mb-1">Source Zₛ (Ω)</label>
+                <input type="number" id="zs-input" value="10" min="1" step="1" class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div>
+                <label class="block text-xs font-semibold uppercase text-slate-500 mb-1">Line Z₀ (Ω)</label>
+                <input type="number" id="z0-input" value="100" min="1" step="1" class="w-full p-2 border rounded focus:ring-2 focus:ring-purple-500">
+            </div>
+            <div>
+                <label class="block text-xs font-semibold uppercase text-slate-500 mb-1">Load Zₗ (Ω)</label>
+                <input type="number" id="zl-input" value="10000" min="1" step="1" class="w-full p-2 border rounded focus:ring-2 focus:ring-red-500">
+            </div>
+            <div>
+                <label class="block text-xs font-semibold uppercase text-slate-500 mb-1">Delay Td (ns)</label>
+                <input type="number" id="td-input" value="1.0" min="0.1" step="0.1" class="w-full p-2 border rounded focus:ring-2 focus:ring-orange-500">
+            </div>
+            <div>
+                <label class="block text-xs font-semibold uppercase text-slate-500 mb-1">Rise Time tr (ns)</label>
+                <input type="number" id="tr-input" value="0.2" min="0" step="0.1" class="w-full p-2 border rounded focus:ring-2 focus:ring-teal-500">
+            </div>
+            <div>
+                <label class="block text-xs font-semibold uppercase text-slate-500 mb-1">Anim Speed</label>
+                <input type="range" id="speed-slider" min="0.2" max="3" step="0.1" value="1" class="w-full mt-2">
+                <div class="text-center text-sm font-medium text-slate-600" id="speed-val">1.0x</div>
+            </div>
+        </div>
+
+        <div class="mb-4 relative border border-slate-300 rounded bg-slate-50 overflow-hidden" style="height: 180px;">
+            <canvas id="animCanvas" width="1000" height="180" class="w-full h-full"></canvas>
+        </div>
+
+        <div class="flex justify-center gap-4 mb-4 bg-slate-100 p-3 rounded-lg border border-slate-200 shadow-sm">
+            <button id="btn-play" class="px-8 py-2 bg-blue-600 text-white font-bold rounded hover:bg-blue-700 transition-colors shadow">Play</button>
+            <button id="btn-reset" class="px-8 py-2 bg-slate-300 text-slate-800 font-bold rounded hover:bg-slate-400 transition-colors shadow">Reset</button>
+        </div>
+
+        <div class="relative border border-slate-300 rounded p-2" style="height: 400px;">
+            <canvas id="timeChart"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const NUM_REFLECTIONS = 20;
+        const MULTIPLIER_TD = 15; 
+        
+        let isPlaying = false;
+        let t_anim = 0; 
+        let speedMult = 1.0;
+        let lastTimestamp = 0;
+        
+        let isPaused = false;
+        let pauseTimer = 0;
+        const PAUSE_DURATION = 3.0; 
+        let boundarySide = ""; 
+        let pauseMath = { v_prev: 0, v_in: 0, v_ref: 0, v_total: 0, gamma: 0 };
+
+        let timeChart;
+        let precalcSrc = [], precalcLoad = [];
+
+        const canvas = document.getElementById('animCanvas');
+        const ctx = canvas.getContext('2d');
+        const btnPlay = document.getElementById('btn-play');
+        const btnReset = document.getElementById('btn-reset');
+        
+        function fmtSign(val) { return (val >= 0 ? '+' : '') + val.toFixed(3); }
+
+        function initCharts() {
+            const chartOptions = {
+                responsive: true, maintainAspectRatio: false, animation: false,
+                interaction: { mode: 'index', intersect: false },
+                elements: { point: { radius: 0 } }
+            };
+
+            const ctxTime = document.getElementById('timeChart').getContext('2d');
+            timeChart = new Chart(ctxTime, {
+                type: 'line',
+                data: {
+                    datasets: [
+                        { label: 'V_Source (x=0)', data: [], borderColor: '#3b82f6', borderWidth: 2.5 },
+                        { label: 'V_Load (x=1)', data: [], borderColor: '#ef4444', borderWidth: 2.5 }
+                    ]
+                },
+                options: { 
+                    ...chartOptions, 
+                    scales: { 
+                        x: { type: 'linear', min: 0, title: {display: true, text: 'Time (ns)'} },
+                        y: { min: 0, suggestedMax: 12, title: {display: true, text: 'Voltage (V)'} } 
+                    } 
+                }
+            });
+        }
+
+        function getInputs() {
+            return {
+                vLow: parseFloat(document.getElementById('vlow-input').value) || 0,
+                vHigh: parseFloat(document.getElementById('vhigh-input').value) || 0,
+                Zs: parseFloat(document.getElementById('zs-input').value) || 0.001,
+                Z0: parseFloat(document.getElementById('z0-input').value) || 0.001,
+                ZL: parseFloat(document.getElementById('zl-input').value) || 0.001,
+                Td: parseFloat(document.getElementById('td-input').value) || 0.001,
+                tr: parseFloat(document.getElementById('tr-input').value) || 0
+            };
+        }
+
+        function S(t, tr) {
+            if (t <= 0) return 0;
+            if (tr === 0 || t >= tr) return 1;
+            return t / tr;
+        }
+
+        function calcContinuousV(t, x, p) {
+            let v = p.v_init;
+            for (let k = 0; k < NUM_REFLECTIONS; k++) {
+                let tk_f = 2 * k * p.Td + x * p.Td;
+                let amp_f = p.v_inc * Math.pow(p.gamma_s * p.gamma_l, k);
+                v += amp_f * S(t - tk_f, p.tr);
+
+                let tk_b = (2 * k + 1) * p.Td + (1 - x) * p.Td;
+                let amp_b = p.v_inc * p.gamma_l * Math.pow(p.gamma_s * p.gamma_l, k);
+                v += amp_b * S(t - tk_b, p.tr);
+            }
+            return v;
+        }
+
+        function setupTheory(params) {
+            const gamma_s = (params.Zs - params.Z0) / (params.Zs + params.Z0);
+            const gamma_l = (params.ZL - params.Z0) / (params.ZL + params.Z0);
+            const v_init = params.vLow * (params.ZL / (params.Zs + params.ZL));
+            const v_steady = params.vHigh * (params.ZL / (params.Zs + params.ZL));
+            const v_inc = (params.vHigh - params.vLow) * (params.Z0 / (params.Zs + params.Z0));
+            const maxTime = MULTIPLIER_TD * params.Td;
+
+            document.getElementById('v-steady-display').innerText = v_steady.toFixed(3) + ' V';
+
+            let theory = { ...params, gamma_s, gamma_l, v_init, v_inc, v_steady, maxTime };
+
+            precalcSrc = []; precalcLoad = [];
+            let timeSteps = 800; // Increased resolution for wider graph
+            for(let i=0; i<=timeSteps; i++) {
+                let t = (i / timeSteps) * maxTime;
+                precalcSrc.push({x: t, y: calcContinuousV(t, 0, theory)});
+                precalcLoad.push({x: t, y: calcContinuousV(t, 1, theory)});
+            }
+
+            // Update Chart Axes dynamically (Min is fixed to 0)
+            let maxV = Math.max(params.vLow, params.vHigh, v_steady);
+            let padding = Math.max(maxV * 0.2, 1); 
+            
+            timeChart.options.scales.y.min = 0;
+            timeChart.options.scales.y.suggestedMax = maxV + padding;
+            timeChart.options.scales.x.max = maxTime;
+
+            return theory;
+        }
+
+        function drawCanvas(t, theory) {
+            const w = canvas.width; const h = canvas.height;
+            ctx.clearRect(0, 0, w, h);
+
+            // Draw Physical Line
+            ctx.beginPath(); ctx.moveTo(50, h/2 + 10); ctx.lineTo(w-50, h/2 + 10);
+            ctx.lineWidth = 4; ctx.strokeStyle = '#cbd5e1'; ctx.stroke();
+
+            // Labels and Gammas
+            ctx.textAlign = 'center'; ctx.font = 'bold 15px sans-serif'; ctx.fillStyle = '#475569';
+            ctx.fillText('SOURCE', 50, h/2 + 45); ctx.fillText('LOAD', w-50, h/2 + 45);
+
+            ctx.font = 'bold 14px monospace';
+            ctx.fillStyle = '#2563eb'; ctx.fillText(`Γs = ${theory.gamma_s.toFixed(3)}`, 50, h/2 - 25);
+            ctx.fillStyle = '#dc2626'; ctx.fillText(`Γl = ${theory.gamma_l.toFixed(3)}`, w-50, h/2 - 25);
+
+            if (t === 0) {
+                document.getElementById('active-wave-display').innerText = "0.000 V";
+                return;
+            }
+
+            let bounceIdx = Math.floor(t / theory.Td);
+            let isForward = bounceIdx % 2 === 0;
+            let timeInTransit = t % theory.Td;
+            let x_pos = timeInTransit / theory.Td;
+            if (!isForward) x_pos = 1 - x_pos;
+
+            let p = Math.floor(bounceIdx/2);
+            let v_packet_amp = isForward ? 
+                (theory.v_inc * Math.pow(theory.gamma_s * theory.gamma_l, p)) : 
+                (theory.v_inc * theory.gamma_l * Math.pow(theory.gamma_s * theory.gamma_l, p));
+
+            // Update Static Display
+            if (isPaused) {
+                document.getElementById('active-wave-display').innerText = "Boundary Calc...";
+            } else {
+                document.getElementById('active-wave-display').innerText = fmtSign(v_packet_amp) + ' V';
+            }
+
+            let drawX = 50 + x_pos * (w - 100);
+
+            if (isPaused) {
+                drawX = boundarySide === 'load' ? w-50 : 50;
+                ctx.beginPath(); ctx.arc(drawX, h/2 + 10, 10 + Math.sin(pauseTimer*6)*4, 0, Math.PI*2);
+                ctx.fillStyle = '#fbbf24'; ctx.fill();
+
+                let boxW = 340, boxH = 100;
+                let boxX = w/2 - boxW/2; let boxY = h/2 - boxH/2 + 10;
+
+                ctx.shadowColor = 'rgba(0,0,0,0.2)'; ctx.shadowBlur = 10; ctx.shadowOffsetY = 4;
+                ctx.fillStyle = 'rgba(255,255,255,0.98)'; ctx.fillRect(boxX, boxY, boxW, boxH);
+                ctx.shadowColor = 'transparent'; 
+
+                ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 2; ctx.strokeRect(boxX, boxY, boxW, boxH);
+                ctx.fillStyle = '#0f172a'; ctx.font = '13px monospace'; ctx.textAlign = 'left';
+                let textX = boxX + 15, textY = boxY + 20;
+
+                ctx.fillText(`Previous Base V:  ${pauseMath.v_prev.toFixed(3)} V`, textX, textY);
+                ctx.fillText(`Target Inc Wave: ${fmtSign(pauseMath.v_in)} V`, textX, textY + 20);
+                ctx.fillStyle = '#64748b'; 
+                ctx.fillText(`Target Ref Wave: ${fmtSign(pauseMath.v_ref)} V (Inc*Γ=${pauseMath.gamma.toFixed(2)})`, textX, textY + 40);
+                
+                ctx.beginPath(); ctx.moveTo(textX, textY + 50); ctx.lineTo(boxX + boxW - 15, textY + 50); ctx.stroke();
+                ctx.fillStyle = '#0f172a'; ctx.font = 'bold 14px monospace';
+                ctx.fillText(`Target Total V :  ${pauseMath.v_total.toFixed(3)} V`, textX, textY + 70);
+
+            } else {
+                // Just draw the moving marker, no text attached to it anymore
+                ctx.beginPath(); ctx.moveTo(drawX, h/2 - 5); ctx.lineTo(drawX, h/2 + 25);
+                ctx.lineWidth = 6; ctx.strokeStyle = isForward ? '#3b82f6' : '#ef4444'; ctx.stroke();
+
+                ctx.beginPath();
+                if (isForward) { ctx.moveTo(drawX + 10, h/2 + 10); ctx.lineTo(drawX - 5, h/2 + 2); ctx.lineTo(drawX - 5, h/2 + 18); } 
+                else { ctx.moveTo(drawX - 10, h/2 + 10); ctx.lineTo(drawX + 5, h/2 + 2); ctx.lineTo(drawX + 5, h/2 + 18); }
+                ctx.fillStyle = isForward ? '#3b82f6' : '#ef4444'; ctx.fill();
+            }
+        }
+
+        function updateTimeChart(t, theory) {
+            let srcData = precalcSrc.filter(pt => pt.x <= t);
+            let loadData = precalcLoad.filter(pt => pt.x <= t);
+            
+            srcData.push({x: t, y: calcContinuousV(t, 0, theory)});
+            loadData.push({x: t, y: calcContinuousV(t, 1, theory)});
+
+            timeChart.data.datasets[0].data = srcData;
+            timeChart.data.datasets[1].data = loadData;
+            timeChart.update();
+        }
+
+        function getDiscreteStepTheory(params, theory) {
+            let srcSteps = [{v: theory.v_init + theory.v_inc}];
+            let loadSteps = [{v: theory.v_init}];
+            let traveling_wave = theory.v_inc;
+            let v_s = srcSteps[0].v, v_l = loadSteps[0].v;
+            
+            for(let k = 1; k <= 20; k++) {
+                if(k%2 !== 0) { 
+                    let ref = traveling_wave * theory.gamma_l;
+                    v_l += traveling_wave + ref; traveling_wave = ref; loadSteps.push({v: v_l});
+                } else { 
+                    let ref = traveling_wave * theory.gamma_s;
+                    v_s += traveling_wave + ref; traveling_wave = ref; srcSteps.push({v: v_s});
+                }
+            }
+            return {srcSteps, loadSteps};
+        }
+
+        function animate(timestamp) {
+            if (!lastTimestamp) lastTimestamp = timestamp;
+            const dt = (timestamp - lastTimestamp) / 1000; 
+            lastTimestamp = timestamp;
+
+            const params = getInputs();
+            const theory = setupTheory(params); 
+
+            if (isPlaying) {
+                if (isPaused) {
+                    pauseTimer -= dt;
+                    if (pauseTimer <= 0) {
+                        isPaused = false;
+                        t_anim = (Math.floor(t_anim / theory.Td) * theory.Td) + 0.001; 
+                    }
+                } else {
+                    let next_t = t_anim + (dt * speedMult);
+                    let currentBounce = Math.floor(t_anim / theory.Td);
+                    let nextBounce = Math.floor(next_t / theory.Td);
+                    
+                    if (nextBounce > currentBounce && next_t <= theory.maxTime) {
+                        t_anim = nextBounce * theory.Td; 
+                        isPaused = true;
+                        pauseTimer = PAUSE_DURATION / speedMult;
+                        
+                        let isHittingLoad = nextBounce % 2 !== 0;
+                        boundarySide = isHittingLoad ? 'load' : 'source';
+                        
+                        let discrete = getDiscreteStepTheory(params, theory);
+                        
+                        if (isHittingLoad) {
+                            let bounceIdx = Math.floor(nextBounce/2) + 1;
+                            let v_total = discrete.loadSteps[bounceIdx].v;
+                            let v_prev = discrete.loadSteps[bounceIdx-1].v;
+                            let v_in = (v_total - v_prev) / (1 + theory.gamma_l);
+                            pauseMath = { v_prev, v_total, v_in, v_ref: v_in * theory.gamma_l, gamma: theory.gamma_l };
+                        } else {
+                            let bounceIdx = Math.floor(nextBounce/2);
+                            let v_total = discrete.srcSteps[bounceIdx].v;
+                            let v_prev = discrete.srcSteps[bounceIdx-1].v;
+                            let v_in = (v_total - v_prev) / (1 + theory.gamma_s);
+                            pauseMath = { v_prev, v_total, v_in, v_ref: v_in * theory.gamma_s, gamma: theory.gamma_s };
+                        }
+                    } else {
+                        t_anim = next_t;
+                    }
+
+                    if (t_anim > theory.maxTime) {
+                        t_anim = theory.maxTime;
+                        isPlaying = false;
+                        btnPlay.innerText = "Play";
+                        btnPlay.className = "px-8 py-2 bg-blue-600 text-white font-bold rounded hover:bg-blue-700 shadow";
+                    }
+                }
+            }
+
+            drawCanvas(t_anim, theory);
+            updateTimeChart(t_anim, theory);
+
+            requestAnimationFrame(animate);
+        }
+
+        btnPlay.addEventListener('click', () => {
+            const params = getInputs();
+            if (t_anim >= MULTIPLIER_TD * params.Td) { resetSim(); } 
+            isPlaying = !isPlaying;
+            btnPlay.innerText = isPlaying ? "Pause" : "Play";
+            btnPlay.className = isPlaying ? 
+                "px-8 py-2 bg-amber-500 text-white font-bold rounded hover:bg-amber-600 shadow" : 
+                "px-8 py-2 bg-blue-600 text-white font-bold rounded hover:bg-blue-700 shadow";
+        });
+
+        function resetSim() {
+            isPlaying = false; t_anim = 0; isPaused = false;
+            btnPlay.innerText = "Play";
+            btnPlay.className = "px-8 py-2 bg-blue-600 text-white font-bold rounded hover:bg-blue-700 shadow";
+            
+            const params = getInputs();
+            const theory = setupTheory(params);
+            
+            drawCanvas(0, theory);
+            timeChart.data.datasets[0].data = []; timeChart.data.datasets[1].data = [];
+            timeChart.update();
+        }
+
+        btnReset.addEventListener('click', resetSim);
+        document.getElementById('speed-slider').addEventListener('input', (e) => {
+            speedMult = parseFloat(e.target.value);
+            document.getElementById('speed-val').innerText = speedMult.toFixed(1) + 'x';
+        });
+
+        ['vlow-input', 'vhigh-input', 'zs-input', 'z0-input', 'zl-input', 'td-input', 'tr-input'].forEach(id => {
+            document.getElementById(id).addEventListener('change', resetSim);
+        });
+
+        initCharts(); resetSim(); requestAnimationFrame(animate);
+
+    </script>
+</body>
+</html>
