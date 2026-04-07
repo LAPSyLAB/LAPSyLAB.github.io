@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transmission Line Crosstalk - Length & Superposition</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc; }
+        canvas { user-select: none; }
+    </style>
+</head>
+<body class="p-4 text-slate-800">
+
+    <div class="max-w-6xl mx-auto bg-white p-6 rounded-xl shadow-lg border border-slate-200">
+        
+        <div class="mb-4">
+            <h1 class="text-2xl font-bold text-slate-900">Transmission Line Crosstalk</h1>
+            <p class="text-sm text-slate-600">Accurate Timing, Line Length, & Reflection Superposition</p>
+        </div>
+
+        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-4 bg-slate-50 p-4 rounded-lg border border-slate-200">
+            <div>
+                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">V Start (V)</label>
+                <input type="number" id="vstart-input" value="3.6" step="0.1" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-green-500 text-sm">
+            </div>
+            <div>
+                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">V End (V)</label>
+                <input type="number" id="vend-input" value="0.2" step="0.1" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-green-500 text-sm">
+            </div>
+            <div>
+                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">A Source Zₛ (Ω)</label>
+                <input type="number" id="zs-input" value="100" min="1" step="1" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-blue-500 text-sm">
+            </div>
+            <div>
+                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">A Line Z₀ (Ω)</label>
+                <input type="number" id="z0-input" value="100" min="1" step="1" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-slate-500 text-sm">
+            </div>
+            <div>
+                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">A Load Zₗ (Ω)</label>
+                <input type="number" id="zl-input" value="100" min="1" step="1" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-red-500 text-sm">
+            </div>
+            <div>
+                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1 text-purple-700">B Near Term</label>
+                <select id="b-near-input" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-purple-500 text-sm font-semibold">
+                    <option value="1">Matched</option>
+                    <option value="2">Open (x2)</option>
+                </select>
+            </div>
+
+            <div>
+                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">Delay Td (ns)</label>
+                <input type="number" id="td-input" value="1.0" min="0.1" step="0.1" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-orange-500 text-sm">
+            </div>
+            <div>
+                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">Rise tr (ns)</label>
+                <input type="number" id="tr-input" value="0.2" min="0" step="0.05" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-teal-500 text-sm">
+            </div>
+            <div>
+                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">Length (m)</label>
+                <input type="number" id="len-input" value="0.3" min="0.01" step="0.05" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-indigo-500 text-sm">
+            </div>
+            <div>
+                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">K_NEXT</label>
+                <input type="number" id="knext-input" value="0.25" step="0.01" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-purple-500 text-sm">
+            </div>
+            <div>
+                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">K_FEXT</label>
+                <input type="number" id="kfext-input" value="-0.15" step="0.01" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-orange-500 text-sm">
+            </div>
+            <div>
+                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1 text-orange-700">B Far Term</label>
+                <select id="b-far-input" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-orange-500 text-sm font-semibold">
+                    <option value="1">Matched</option>
+                    <option value="2">Open (x2)</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="mb-3 relative border border-slate-300 rounded bg-slate-50 overflow-hidden" style="height: 120px;">
+            <canvas id="animCanvas" width="1000" height="120" class="w-full h-full"></canvas>
+        </div>
+
+        <div class="flex justify-center gap-4 mb-4 bg-slate-100 p-2 rounded-lg border border-slate-200 shadow-sm">
+            <button id="btn-play" class="px-8 py-1.5 bg-blue-600 text-white font-bold rounded hover:bg-blue-700 shadow transition-colors">Play</button>
+            <button id="btn-reset" class="px-8 py-1.5 bg-slate-300 text-slate-800 font-bold rounded hover:bg-slate-400 shadow transition-colors">Reset</button>
+            <div class="flex flex-col justify-center ml-4">
+                <input type="range" id="speed-slider" min="0.2" max="3" step="0.1" value="1" class="w-32">
+                <div class="text-center text-[10px] font-bold text-slate-500 uppercase mt-1">Speed <span id="speed-val">1.0</span>x</div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 gap-4">
+            <div class="relative border border-slate-300 rounded p-2" style="height: 180px;">
+                <canvas id="chartA"></canvas>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="relative border border-slate-300 rounded p-2" style="height: 220px;">
+                    <canvas id="chartB_Near"></canvas>
+                </div>
+                <div class="relative border border-slate-300 rounded p-2" style="height: 220px;">
+                    <canvas id="chartB_Far"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const NUM_REFLECTIONS = 20;
+        const MULTIPLIER_TD = 10; // Show up to 10 * Td to keep graphs clean
+        
+        let isPlaying = false; let t_anim = 0; let speedMult = 1.0; let lastTimestamp = 0;
+        let isPaused = false; let pauseTimer = 0; const PAUSE_DURATION = 1.5; 
+        
+        let chartA, chartB_Near, chartB_Far;
+        
+        // Data Arrays
+        let pSrc = [], pLoad = [];
+        let pBNearFwd = [], pBNearBwd = [], pBNearTot = [];
+        let pBFarFwd = [], pBFarBwd = [], pBFarTot = [];
+
+        const canvas = document.getElementById('animCanvas');
+        const ctx = canvas.getContext('2d');
+        const btnPlay = document.getElementById('btn-play');
+        const btnReset = document.getElementById('btn-reset');
+
+        const chartOptions = {
+            responsive: true, maintainAspectRatio: false, animation: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: { tooltip: { enabled: true } },
+            elements: { point: { radius: 0, hitRadius: 10, hoverRadius: 4 } }
+        };
+
+        function initCharts() {
+            chartA = new Chart(document.getElementById('chartA').getContext('2d'), {
+                type: 'line',
+                data: { datasets: [
+                    { label: 'Line A Source (V)', data: [], borderColor: '#3b82f6', borderWidth: 2.5 },
+                    { label: 'Line A Load (V)', data: [], borderColor: '#ef4444', borderWidth: 2.5 }
+                ]},
+                options: { ...chartOptions, scales: { x: { type: 'linear', min: 0 }, y: { suggestedMin: -1, suggestedMax: 6 } } }
+            });
+
+            chartB_Near = new Chart(document.getElementById('chartB_Near').getContext('2d'), {
+                type: 'line',
+                data: { datasets: [
+                    { label: 'Forward NEXT', data: [], borderColor: 'rgba(139,92,246,0.5)', borderWidth: 1.5, fill: false },
+                    { label: 'Backward FEXT', data: [], borderColor: 'rgba(14,165,233,0.5)', borderWidth: 1.5, fill: false },
+                    { label: 'Total Near-End Sum', data: [], borderColor: '#6d28d9', borderWidth: 2.5, borderDash: [4, 4], fill: false }
+                ]},
+                options: { ...chartOptions, scales: { x: { type: 'linear', min: 0 }, y: { suggestedMin: -1, suggestedMax: 1 } } }
+            });
+
+            chartB_Far = new Chart(document.getElementById('chartB_Far').getContext('2d'), {
+                type: 'line',
+                data: { datasets: [
+                    { label: 'Forward FEXT', data: [], borderColor: 'rgba(249,115,22,0.5)', borderWidth: 1.5, fill: false },
+                    { label: 'Backward NEXT', data: [], borderColor: 'rgba(236,72,153,0.5)', borderWidth: 1.5, fill: false },
+                    { label: 'Total Far-End Sum', data: [], borderColor: '#c2410c', borderWidth: 2.5, borderDash: [4, 4], fill: false }
+                ]},
+                options: { ...chartOptions, scales: { x: { type: 'linear', min: 0 }, y: { suggestedMin: -1, suggestedMax: 1 } } }
+            });
+        }
+
+        function getInputs() {
+            return {
+                vStart: parseFloat(document.getElementById('vstart-input').value) || 0,
+                vEnd: parseFloat(document.getElementById('vend-input').value) || 0,
+                Zs: parseFloat(document.getElementById('zs-input').value) || 0.001,
+                Z0: parseFloat(document.getElementById('z0-input').value) || 100,
+                ZL: parseFloat(document.getElementById('zl-input').value) || 0.001,
+                Td: parseFloat(document.getElementById('td-input').value) || 1.0,
+                tr: Math.max(0, parseFloat(document.getElementById('tr-input').value) || 0), 
+                Len: parseFloat(document.getElementById('len-input').value) || 0.3,
+                Knext: parseFloat(document.getElementById('knext-input').value) || 0.0,
+                Kfext: parseFloat(document.getElementById('kfext-input').value) || 0.0,
+                nearMult: parseInt(document.getElementById('b-near-input').value) || 1,
+                farMult: parseInt(document.getElementById('b-far-input').value) || 1
+            };
+        }
+
+        function S(t, tr) {
+            if (t <= 0) return 0;
+            if (t >= tr) return 1;
+            return t / tr;
+        }
+
+        function P(t, tr) {
+            if (t > 0 && t < tr) return 1 / tr;
+            return 0;
+        }
+
+        function setupTheory(p) {
+            const gamma_s = (p.Zs - p.Z0) / (p.Zs + p.Z0);
+            const gamma_l = (p.ZL - p.Z0) / (p.ZL + p.Z0);
+            
+            // Initial steady state line voltage before switching
+            const v_init = p.vStart * (p.ZL / (p.Zs + p.ZL));
+            
+            // The step voltage injected into the line
+            const v_inc = (p.vEnd - p.vStart) * (p.Z0 / (p.Zs + p.Z0));
+            
+            const maxTime = MULTIPLIER_TD * p.Td;
+
+            // Enforce minimum physical tr to avoid Infinity spikes when calculating derivatives (P(t))
+            const effective_tr = Math.max(0.01, p.tr);
+
+            let edges = [];
+            let wave = v_inc;
+            for(let k=0; k<NUM_REFLECTIONS; k++) {
+                edges.push(wave);
+                wave *= (k % 2 === 0) ? gamma_l : gamma_s;
+            }
+
+            pSrc = []; pLoad = [];
+            pBNearFwd = []; pBNearBwd = []; pBNearTot = [];
+            pBFarFwd = []; pBFarBwd = []; pBFarTot = [];
+            
+            // DYNAMIC SAMPLING: Inject exact boundary timestamps to perfectly capture sharp steps (tr=0)
+            let timePoints = new Set();
+            for(let i=0; i<=600; i++) timePoints.add((i / 600) * maxTime); 
+            for(let k=0; k<=NUM_REFLECTIONS+2; k++) {
+                let tk = k * p.Td;
+                timePoints.add(tk);
+                timePoints.add(tk + effective_tr);
+                timePoints.add(tk + p.Td);
+                timePoints.add(tk + p.Td + effective_tr);
+                timePoints.add(tk + 2*p.Td);
+                timePoints.add(tk + 2*p.Td + effective_tr);
+            }
+            let t_array = Array.from(timePoints).sort((a,b) => a-b).filter(t => t <= maxTime);
+
+            let maxB = 0.1;
+
+            for(let t of t_array) {
+                let v_s = v_init; let v_l = v_init;
+                
+                // --- LINE A PERFECT TIMING ---
+                for(let k=0; k<edges.length; k++) {
+                    let tk = k * p.Td;
+                    if (k % 2 === 0) { // Forward wave launches from source
+                        v_s += edges[k] * S(t - tk, effective_tr);
+                        v_l += edges[k] * S(t - (tk + p.Td), effective_tr);
+                    } else { // Backward wave launches from load
+                        v_l += edges[k] * S(t - tk, effective_tr);
+                        v_s += edges[k] * S(t - (tk + p.Td), effective_tr);
+                    }
+                }
+                
+                let v_b_0_fwd = 0, v_b_0_bwd = 0;
+                let v_b_L_fwd = 0, v_b_L_bwd = 0;
+
+                for(let k=0; k<edges.length; k++) {
+                    let tk = k * p.Td;
+                    if (k % 2 === 0) { // Forward Wave
+                        // NEXT at Near End
+                        v_b_0_fwd += p.Knext * edges[k] * (S(t - tk, effective_tr) - S(t - tk - 2*p.Td, effective_tr));
+                        // FEXT at Far End (Arrives at tk + Td)
+                        v_b_L_fwd += p.Kfext * p.Len * edges[k] * P(t - (tk + p.Td), effective_tr);
+                    } else { // Backward Wave
+                        // FEXT at Near End (Arrives at tk + Td)
+                        v_b_0_bwd += p.Kfext * p.Len * edges[k] * P(t - (tk + p.Td), effective_tr);
+                        // NEXT at Far End
+                        v_b_L_bwd += p.Knext * edges[k] * (S(t - tk, effective_tr) - S(t - tk - 2*p.Td, effective_tr));
+                    }
+                }
+
+                // APPLY VICTIM LINE REFLECTION DOUBLING
+                v_b_0_fwd *= p.nearMult;
+                v_b_0_bwd *= p.nearMult;
+                v_b_L_fwd *= p.farMult;
+                v_b_L_bwd *= p.farMult;
+
+                let v_b_0_tot = v_b_0_fwd + v_b_0_bwd;
+                let v_b_L_tot = v_b_L_fwd + v_b_L_bwd;
+
+                pSrc.push({x: t, y: v_s}); pLoad.push({x: t, y: v_l});
+                
+                pBNearFwd.push({x: t, y: v_b_0_fwd});
+                pBNearBwd.push({x: t, y: v_b_0_bwd});
+                pBNearTot.push({x: t, y: v_b_0_tot});
+
+                pBFarFwd.push({x: t, y: v_b_L_fwd});
+                pBFarBwd.push({x: t, y: v_b_L_bwd});
+                pBFarTot.push({x: t, y: v_b_L_tot});
+
+                maxB = Math.max(maxB, Math.abs(v_b_0_tot), Math.abs(v_b_L_tot), Math.abs(v_b_0_fwd), Math.abs(v_b_L_fwd));
+            }
+
+            chartA.options.scales.x.max = maxTime;
+            chartB_Near.options.scales.x.max = maxTime;
+            chartB_Far.options.scales.x.max = maxTime;
+
+            let absMaxA = Math.max(...pSrc.map(pt=>pt.y), ...pLoad.map(pt=>pt.y), p.vStart, p.vEnd);
+            let absMinA = Math.min(...pSrc.map(pt=>pt.y), ...pLoad.map(pt=>pt.y), p.vStart, p.vEnd);
+            
+            // Pad the axes slightly so lines don't hug the border perfectly
+            chartA.options.scales.y.suggestedMin = absMinA - 0.5;
+            chartA.options.scales.y.suggestedMax = absMaxA + 0.5;
+
+            chartB_Near.options.scales.y.suggestedMin = -maxB * 1.2;
+            chartB_Near.options.scales.y.suggestedMax = maxB * 1.2;
+            chartB_Far.options.scales.y.suggestedMin = -maxB * 1.2;
+            chartB_Far.options.scales.y.suggestedMax = maxB * 1.2;
+
+            return { gamma_s, gamma_l, v_inc, maxTime };
+        }
+
+        function drawCanvas(t, theory, p) {
+            const w = canvas.width; const h = canvas.height;
+            ctx.clearRect(0, 0, w, h);
+
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = '#94a3b8'; ctx.beginPath(); ctx.moveTo(50, h/2 - 15); ctx.lineTo(w-50, h/2 - 15); ctx.stroke();
+            ctx.strokeStyle = '#cbd5e1'; ctx.beginPath(); ctx.moveTo(50, h/2 + 15); ctx.lineTo(w-50, h/2 + 15); ctx.stroke();
+
+            ctx.textAlign = 'center'; ctx.font = 'bold 12px sans-serif'; ctx.fillStyle = '#475569';
+            ctx.fillText('A', 25, h/2 - 10); ctx.fillText('B', 25, h/2 + 20);
+            
+            ctx.font = 'bold 12px monospace';
+            ctx.fillStyle = '#2563eb'; ctx.fillText(`Γs=${theory.gamma_s.toFixed(2)}`, 60, 20);
+            ctx.fillStyle = '#dc2626'; ctx.fillText(`Γl=${theory.gamma_l.toFixed(2)}`, w-60, 20);
+            
+            ctx.fillStyle = '#10b981'; ctx.fillText(`V_inc=${theory.v_inc.toFixed(2)}V`, w/2, 20);
+
+            if (t === 0) return;
+
+            let bounceIdx = Math.floor(t / p.Td);
+            let isForward = bounceIdx % 2 === 0;
+            let timeInTransit = t % p.Td;
+            let x_pos = timeInTransit / p.Td;
+            if (!isForward) x_pos = 1 - x_pos;
+
+            let drawX = 50 + x_pos * (w - 100);
+
+            if (isPaused) {
+                drawX = (bounceIdx % 2 === 0) ? 50 : w-50; 
+                ctx.beginPath(); ctx.arc(drawX, h/2 - 15, 8 + Math.sin(pauseTimer*8)*3, 0, Math.PI*2);
+                ctx.fillStyle = '#fbbf24'; ctx.fill();
+            } else {
+                ctx.beginPath(); ctx.arc(drawX, h/2 - 15, 6, 0, Math.PI*2);
+                ctx.fillStyle = isForward ? '#3b82f6' : '#ef4444'; ctx.fill();
+            }
+        }
+
+        function updateTimeCharts(t) {
+            chartA.data.datasets[0].data = pSrc.filter(pt => pt.x <= t);
+            chartA.data.datasets[1].data = pLoad.filter(pt => pt.x <= t);
+            
+            chartB_Near.data.datasets[0].data = pBNearFwd.filter(pt => pt.x <= t);
+            chartB_Near.data.datasets[1].data = pBNearBwd.filter(pt => pt.x <= t);
+            chartB_Near.data.datasets[2].data = pBNearTot.filter(pt => pt.x <= t);
+            
+            chartB_Far.data.datasets[0].data = pBFarFwd.filter(pt => pt.x <= t);
+            chartB_Far.data.datasets[1].data = pBFarBwd.filter(pt => pt.x <= t);
+            chartB_Far.data.datasets[2].data = pBFarTot.filter(pt => pt.x <= t);
+
+            chartA.update(); chartB_Near.update(); chartB_Far.update();
+        }
+
+        function animate(timestamp) {
+            if (!lastTimestamp) lastTimestamp = timestamp;
+            const dt = (timestamp - lastTimestamp) / 1000; 
+            lastTimestamp = timestamp;
+
+            const p = getInputs();
+            const theory = setupTheory(p); 
+
+            if (isPlaying) {
+                if (isPaused) {
+                    pauseTimer -= dt;
+                    if (pauseTimer <= 0) { isPaused = false; t_anim = (Math.floor(t_anim / p.Td) * p.Td) + 0.001; }
+                } else {
+                    let next_t = t_anim + (dt * speedMult);
+                    let currentBounce = Math.floor(t_anim / p.Td);
+                    let nextBounce = Math.floor(next_t / p.Td);
+                    
+                    if (nextBounce > currentBounce && next_t <= theory.maxTime) {
+                        t_anim = nextBounce * p.Td; 
+                        isPaused = true;
+                        pauseTimer = PAUSE_DURATION / Math.max(0.5, speedMult);
+                    } else {
+                        t_anim = next_t;
+                    }
+
+                    if (t_anim > theory.maxTime) {
+                        t_anim = theory.maxTime;
+                        isPlaying = false;
+                        btnPlay.innerText = "Play";
+                        btnPlay.className = "px-8 py-1.5 bg-blue-600 text-white font-bold rounded hover:bg-blue-700 shadow transition-colors";
+                    }
+                }
+            }
+
+            drawCanvas(t_anim, theory, p);
+            updateTimeCharts(t_anim);
+
+            requestAnimationFrame(animate);
+        }
+
+        btnPlay.addEventListener('click', () => {
+            const p = getInputs();
+            if (t_anim >= MULTIPLIER_TD * p.Td) { resetSim(); } 
+            isPlaying = !isPlaying;
+            btnPlay.innerText = isPlaying ? "Pause" : "Play";
+            btnPlay.className = isPlaying ? "px-8 py-1.5 bg-amber-500 text-white font-bold rounded hover:bg-amber-600 shadow transition-colors" : "px-8 py-1.5 bg-blue-600 text-white font-bold rounded hover:bg-blue-700 shadow transition-colors";
+        });
+
+        function resetSim() {
+            isPlaying = false; t_anim = 0; isPaused = false;
+            btnPlay.innerText = "Play";
+            btnPlay.className = "px-8 py-1.5 bg-blue-600 text-white font-bold rounded hover:bg-blue-700 shadow transition-colors";
+            
+            const p = getInputs(); const theory = setupTheory(p);
+            drawCanvas(0, theory, p);
+            
+            chartA.data.datasets.forEach(ds => ds.data = []);
+            chartB_Near.data.datasets.forEach(ds => ds.data = []);
+            chartB_Far.data.datasets.forEach(ds => ds.data = []);
+            
+            chartA.update(); chartB_Near.update(); chartB_Far.update();
+        }
+
+        btnReset.addEventListener('click', resetSim);
+        document.getElementById('speed-slider').addEventListener('input', (e) => {
+            speedMult = parseFloat(e.target.value);
+            document.getElementById('speed-val').innerText = speedMult.toFixed(1);
+        });
+
+        const inputs = ['vstart-input', 'vend-input', 'zs-input', 'z0-input', 'zl-input', 'td-input', 'tr-input', 'len-input', 'knext-input', 'kfext-input', 'b-near-input', 'b-far-input'];
+        inputs.forEach(id => {
+            document.getElementById(id).addEventListener('change', resetSim);
+        });
+
+        initCharts(); resetSim(); requestAnimationFrame(animate);
+
+    </script>
+</body>
+</html>
