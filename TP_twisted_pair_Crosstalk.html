@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UTP Crosstalk: Static Twists vs Moving Signals</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: #f4f4f9;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            background: #eef2f5;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        canvas {
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            width: 100%;
+        }
+        .graph-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+            font-size: 1rem;
+            color: #111;
+        }
+        h1 { font-size: 1.5rem; margin-top: 0; }
+        .description { margin-bottom: 20px; line-height: 1.6; font-size: 0.95rem; }
+        .legend { margin-bottom: 10px; font-size: 0.85rem; color: #555; }
+        .color-box { display: inline-block; width: 12px; height: 12px; margin-right: 4px; vertical-align: middle; border-radius: 2px;}
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Fixed Twists & Moving Signals</h1>
+    <div class="description" id="dynamic-text">Loading...</div>
+
+    <div class="controls">
+        <div class="control-group">
+            <label>Twist Configuration (Factory Fixed):</label>
+            <div>
+                <input type="radio" id="sameRate" name="twistMode" value="same" checked>
+                <label for="sameRate" style="font-weight: normal;">Same Twist Rate (In Sync)</label>
+            </div>
+            <div>
+                <input type="radio" id="diffRate" name="twistMode" value="diff">
+                <label for="diffRate" style="font-weight: normal;">Different Twist Rates</label>
+            </div>
+        </div>
+        <div class="control-group" style="flex: 0.7;">
+            <label for="signal-slider">Pair 1 Signal Strength: <span id="signal-value">75</span>%</label>
+            <input type="range" id="signal-slider" min="0" max="100" value="75" style="width: 100%;">
+        </div>
+    </div>
+
+    <div class="graph-title">Physical Cable Alignment (Wires remain entirely stationary)</div>
+    <div class="legend">
+        <span class="color-box" style="background: #1b5e20;"></span>/<span class="color-box" style="background: #4caf50;"></span> Pair 1 (Active) &nbsp;&nbsp;&nbsp;
+        <span class="color-box" style="background: #e65100;"></span>/<span class="color-box" style="background: #ffb74d;"></span> Pair 2 (Victim) &nbsp;&nbsp;&nbsp;
+        <span class="color-box" style="background: rgba(255,0,0,0.5);"></span> Moving Interference
+    </div>
+    <canvas id="schematicCanvas" width="760" height="220"></canvas>
+
+    <div class="graph-title">Final Received Crosstalk on Pair 2 (Error Noise)</div>
+    <div class="legend">Calculated difference (Top Wire minus Bottom Wire) at the receiver.</div>
+    <canvas id="graphCanvas" width="760" height="150"></canvas>
+</div>
+
+<script>
+    const schematicCanvas = document.getElementById('schematicCanvas');
+    const ctxSchematic = schematicCanvas.getContext('2d');
+    const graphCanvas = document.getElementById('graphCanvas');
+    const ctxGraph = graphCanvas.getContext('2d');
+    
+    const signalSlider = document.getElementById('signal-slider');
+    const signalValue = document.getElementById('signal-value');
+    const modeRadios = document.getElementsByName('twistMode');
+    const dynamicText = document.getElementById('dynamic-text');
+
+    // Colors
+    const colorP1A = '#1b5e20'; 
+    const colorP1B = '#4caf50'; 
+    const colorP2A = '#e65100'; 
+    const colorP2B = '#ffb74d'; 
+    const colorError = '#d32f2f'; 
+    const colorClean = '#1976d2'; 
+
+    let mode = 'same';
+    let signalStrength = 75;
+    let time = 0;
+
+    signalSlider.addEventListener('input', (e) => {
+        signalStrength = parseInt(e.target.value);
+        signalValue.innerText = signalStrength;
+        updateText();
+    });
+
+    modeRadios.forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            mode = e.target.value;
+            updateText();
+        });
+    });
+
+    function updateText() {
+        if (signalStrength === 0) {
+            dynamicText.innerHTML = "With zero signal strength, no data is traveling down Pair 1, so no interference fields are generated.";
+        } else if (mode === 'same') {
+            dynamicText.innerHTML = "<strong>Same Twist Rate (Failure):</strong> The physical wires are completely static. Notice how their curves perfectly parallel each other. Because the wires are physically in sync, as the signal travels down Pair 1, the interference field hits the dark orange wire much harder than the light orange wire <em>continuously</em>. This uneven exposure results in massive leftover crosstalk (see graph).";
+        } else {
+            dynamicText.innerHTML = "<strong>Different Twist Rates (Success):</strong> By permanently altering the twist rate of Pair 2 at the factory, the wires are physically misaligned. They cross at sharp angles instead of running parallel. As the signal travels, both wires of Pair 2 take equal turns being exposed to the interference. Because they absorb equal noise, the receiver cancels it out completely, resulting in near silence (see graph).";
+        }
+    }
+
+    function drawSchematic() {
+        ctxSchematic.clearRect(0, 0, schematicCanvas.width, schematicCanvas.height);
+        
+        const startX = 30;
+        const endX = 730;
+        const amplitude = 18;
+        
+        // --- 1. Draw Static Wires (No 'time' variable used for Y coordinates) ---
+        ctxSchematic.lineWidth = 3;
+        
+        const freq1 = 0.04;
+        const yOffset1 = 60;
+        const freq2 = (mode === 'same') ? 0.04 : 0.065; 
+        const yOffset2 = 140;
+
+        // Draw Pair 2 (Victim)
+        ctxSchematic.beginPath();
+        for(let x = startX; x <= endX; x++) {
+            let y = yOffset2 + Math.sin(x * freq2) * amplitude;
+            if(x === startX) ctxSchematic.moveTo(x, y); else ctxSchematic.lineTo(x, y);
+        }
+        ctxSchematic.strokeStyle = colorP2A; ctxSchematic.stroke();
+
+        ctxSchematic.beginPath();
+        for(let x = startX; x <= endX; x++) {
+            let y = yOffset2 + Math.sin(x * freq2 + Math.PI) * amplitude;
+            if(x === startX) ctxSchematic.moveTo(x, y); else ctxSchematic.lineTo(x, y);
+        }
+        ctxSchematic.strokeStyle = colorP2B; ctxSchematic.stroke();
+
+        // Draw Pair 1 (Active)
+        ctxSchematic.beginPath();
+        for(let x = startX; x <= endX; x++) {
+            let y = yOffset1 + Math.sin(x * freq1) * amplitude;
+            if(x === startX) ctxSchematic.moveTo(x, y); else ctxSchematic.lineTo(x, y);
+        }
+        ctxSchematic.strokeStyle = colorP1A; ctxSchematic.stroke();
+
+        ctxSchematic.beginPath();
+        for(let x = startX; x <= endX; x++) {
+            let y = yOffset1 + Math.sin(x * freq1 + Math.PI) * amplitude;
+            if(x === startX) ctxSchematic.moveTo(x, y); else ctxSchematic.lineTo(x, y);
+        }
+        ctxSchematic.strokeStyle = colorP1B; ctxSchematic.stroke();
+
+
+        // --- 2. Draw Moving Data Signals on Pair 1 ---
+        // Animate little bright "pulses" moving along the fixed path of Pair 1
+        if (signalStrength > 0) {
+            ctxSchematic.fillStyle = '#b2ff59'; // Bright green for data
+            for (let i = 0; i < 10; i++) {
+                // Calculate position moving left to right
+                let pulseX = startX + ((time * 3 + i * 80) % (endX - startX));
+                let pulseY = yOffset1 + Math.sin(pulseX * freq1) * amplitude;
+                
+                ctxSchematic.beginPath();
+                ctxSchematic.arc(pulseX, pulseY, 4, 0, Math.PI*2);
+                ctxSchematic.fill();
+            }
+        }
+
+        // --- 3. Draw Moving Interference Fields ---
+        // Fields emanate from the moving data pulses towards Pair 2
+        if (signalStrength > 0) {
+            ctxSchematic.lineWidth = 2;
+            let fieldOpacity = signalStrength / 100;
+            
+            for (let i = 0; i < 15; i++) {
+                // Moving X coordinate for the interference field
+                let fieldX = startX + ((time * 4 + i * 50) % (endX - startX));
+                
+                let p1y = yOffset1 + Math.sin(fieldX * freq1 + Math.PI) * amplitude; 
+                let p2y = yOffset2 + Math.sin(fieldX * freq2) * amplitude;
+                let distance = Math.abs(p1y - p2y);
+                
+                if (mode === 'same') {
+                    // Continuous parallel coupling
+                    ctxSchematic.strokeStyle = `rgba(211, 47, 47, ${fieldOpacity * 0.5})`;
+                    ctxSchematic.beginPath();
+                    ctxSchematic.moveTo(fieldX, yOffset1 + amplitude + 5);
+                    ctxSchematic.lineTo(fieldX, yOffset2 - amplitude - 5);
+                    ctxSchematic.stroke();
+                } else {
+                    // Only couple where wires physically approach each other
+                    if (distance < 75) {
+                        ctxSchematic.strokeStyle = `rgba(211, 47, 47, ${fieldOpacity * 0.4})`;
+                        ctxSchematic.beginPath();
+                        ctxSchematic.moveTo(fieldX, p1y);
+                        ctxSchematic.lineTo(fieldX, p2y);
+                        ctxSchematic.stroke();
+                    }
+                }
+            }
+        }
+    }
+
+    function drawGraph() {
+        const w = graphCanvas.width;
+        const h = graphCanvas.height;
+        const midY = h / 2;
+        
+        ctxGraph.clearRect(0, 0, w, h);
+        
+        // Baseline
+        ctxGraph.strokeStyle = '#eee'; 
+        ctxGraph.lineWidth = 1;
+        ctxGraph.beginPath(); 
+        ctxGraph.moveTo(0, midY); 
+        ctxGraph.lineTo(w, midY); 
+        ctxGraph.stroke();
+
+        ctxGraph.beginPath();
+        ctxGraph.lineWidth = 2.5;
+
+        const activeSignalAmplitude = signalStrength * 0.6;
+        
+        for (let x = 0; x < w; x++) {
+            // The moving sine wave is drawn on the graph using 'time'
+            let activeSignal = Math.sin((x + time * 3) * 0.05) * activeSignalAmplitude;
+            let finalNoise = 0;
+
+            if (mode === 'same') {
+                // Fails: Wires are parallel, noise doesn't cancel
+                finalNoise = activeSignal * 0.8 + (Math.random() - 0.5) * 5;
+                ctxGraph.strokeStyle = colorError; 
+            } else {
+                // Succeeds: Wires cross out of sync, noise cancels to near zero
+                finalNoise = (Math.random() - 0.5) * 3; 
+                ctxGraph.strokeStyle = colorClean; 
+            }
+            
+            if (signalStrength === 0) finalNoise = 0;
+
+            if (x === 0) ctxGraph.moveTo(x, midY - finalNoise); 
+            else ctxGraph.lineTo(x, midY - finalNoise);
+        }
+        ctxGraph.stroke();
+    }
+
+    function animate() {
+        time++;
+        drawSchematic();
+        drawGraph();
+        requestAnimationFrame(animate);
+    }
+
+    updateText();
+    animate();
+</script>
+</body>
+</html>

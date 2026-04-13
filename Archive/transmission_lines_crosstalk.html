@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Transmission Line Crosstalk - Full Pulse Simulation</title>
+    <title>Transmission Line Crosstalk - Length & Superposition</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
@@ -17,16 +17,16 @@
         
         <div class="mb-4">
             <h1 class="text-2xl font-bold text-slate-900">Transmission Line Crosstalk</h1>
-            <p class="text-sm text-slate-600">Full Pulse Simulation (Direct Line Voltage Injection)</p>
+            <p class="text-sm text-slate-600">Accurate Timing, Line Length, & Reflection Superposition</p>
         </div>
 
-        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-4 bg-slate-50 p-4 rounded-lg border border-slate-200">
+        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-4 bg-slate-50 p-4 rounded-lg border border-slate-200">
             <div>
-                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">Line V Start</label>
+                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">V Start (V)</label>
                 <input type="number" id="vstart-input" value="3.6" step="0.1" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-green-500 text-sm">
             </div>
             <div>
-                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">Line V End</label>
+                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">V End (V)</label>
                 <input type="number" id="vend-input" value="0.2" step="0.1" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-green-500 text-sm">
             </div>
             <div>
@@ -48,28 +48,17 @@
                     <option value="2">Open (x2)</option>
                 </select>
             </div>
-            <div>
-                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1 text-orange-700">B Far Term</label>
-                <select id="b-far-input" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-orange-500 text-sm font-semibold">
-                    <option value="1">Matched</option>
-                    <option value="2">Open (x2)</option>
-                </select>
-            </div>
-            
+
             <div>
                 <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">Delay Td (ns)</label>
                 <input type="number" id="td-input" value="1.0" min="0.1" step="0.1" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-orange-500 text-sm">
-            </div>
-            <div>
-                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1 text-blue-700">Pulse Width (ns)</label>
-                <input type="number" id="pw-input" value="5.0" min="0.1" step="0.5" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-blue-500 text-sm font-bold bg-blue-50">
             </div>
             <div>
                 <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">Rise tr (ns)</label>
                 <input type="number" id="tr-input" value="0.2" min="0" step="0.05" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-teal-500 text-sm">
             </div>
             <div>
-                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">Line Len (m)</label>
+                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">Length (m)</label>
                 <input type="number" id="len-input" value="0.3" min="0.01" step="0.05" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-indigo-500 text-sm">
             </div>
             <div>
@@ -79,6 +68,13 @@
             <div>
                 <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">K_FEXT</label>
                 <input type="number" id="kfext-input" value="-0.15" step="0.01" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-orange-500 text-sm">
+            </div>
+            <div>
+                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1 text-orange-700">B Far Term</label>
+                <select id="b-far-input" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-orange-500 text-sm font-semibold">
+                    <option value="1">Matched</option>
+                    <option value="2">Open (x2)</option>
+                </select>
             </div>
         </div>
 
@@ -112,12 +108,14 @@
 
     <script>
         const NUM_REFLECTIONS = 20;
-        const MULTIPLIER_TD = 10; 
+        const MULTIPLIER_TD = 10; // Show up to 10 * Td to keep graphs clean
         
         let isPlaying = false; let t_anim = 0; let speedMult = 1.0; let lastTimestamp = 0;
+        let isPaused = false; let pauseTimer = 0; const PAUSE_DURATION = 1.5; 
         
         let chartA, chartB_Near, chartB_Far;
         
+        // Data Arrays
         let pSrc = [], pLoad = [];
         let pBNearFwd = [], pBNearBwd = [], pBNearTot = [];
         let pBFarFwd = [], pBFarBwd = [], pBFarTot = [];
@@ -174,7 +172,6 @@
                 ZL: parseFloat(document.getElementById('zl-input').value) || 0.001,
                 Td: parseFloat(document.getElementById('td-input').value) || 1.0,
                 tr: Math.max(0, parseFloat(document.getElementById('tr-input').value) || 0), 
-                pulseWidth: parseFloat(document.getElementById('pw-input').value) || 5.0,
                 Len: parseFloat(document.getElementById('len-input').value) || 0.3,
                 Knext: parseFloat(document.getElementById('knext-input').value) || 0.0,
                 Kfext: parseFloat(document.getElementById('kfext-input').value) || 0.0,
@@ -198,16 +195,16 @@
             const gamma_s = (p.Zs - p.Z0) / (p.Zs + p.Z0);
             const gamma_l = (p.ZL - p.Z0) / (p.ZL + p.Z0);
             
-            // --- UPDATED LOGIC ---
-            // Bypass the voltage divider. V Start and V End enter the line directly.
-            const v_init = p.vStart; 
-            const v_inc = p.vEnd - p.vStart; 
+            // Initial steady state line voltage before switching
+            const v_init = p.vStart * (p.ZL / (p.Zs + p.ZL));
+            
+            // The step voltage injected into the line
+            const v_inc = (p.vEnd - p.vStart) * (p.Z0 / (p.Zs + p.Z0));
             
             const maxTime = MULTIPLIER_TD * p.Td;
-            const effective_tr = Math.max(0.01, p.tr);
 
-            const S_eff = (time) => S(time, effective_tr) - S(time - p.pulseWidth, effective_tr);
-            const P_eff = (time) => P(time, effective_tr) - P(time - p.pulseWidth, effective_tr);
+            // Enforce minimum physical tr to avoid Infinity spikes when calculating derivatives (P(t))
+            const effective_tr = Math.max(0.01, p.tr);
 
             let edges = [];
             let wave = v_inc;
@@ -220,19 +217,17 @@
             pBNearFwd = []; pBNearBwd = []; pBNearTot = [];
             pBFarFwd = []; pBFarBwd = []; pBFarTot = [];
             
+            // DYNAMIC SAMPLING: Inject exact boundary timestamps to perfectly capture sharp steps (tr=0)
             let timePoints = new Set();
-            for(let i=0; i<=800; i++) timePoints.add((i / 800) * maxTime); 
+            for(let i=0; i<=600; i++) timePoints.add((i / 600) * maxTime); 
             for(let k=0; k<=NUM_REFLECTIONS+2; k++) {
                 let tk = k * p.Td;
-                let critical_points = [
-                    tk, tk + effective_tr, 
-                    tk + p.Td, tk + p.Td + effective_tr, 
-                    tk + 2*p.Td, tk + 2*p.Td + effective_tr
-                ];
-                critical_points.forEach(tp => {
-                    timePoints.add(tp);
-                    timePoints.add(tp + p.pulseWidth); 
-                });
+                timePoints.add(tk);
+                timePoints.add(tk + effective_tr);
+                timePoints.add(tk + p.Td);
+                timePoints.add(tk + p.Td + effective_tr);
+                timePoints.add(tk + 2*p.Td);
+                timePoints.add(tk + 2*p.Td + effective_tr);
             }
             let t_array = Array.from(timePoints).sort((a,b) => a-b).filter(t => t <= maxTime);
 
@@ -241,14 +236,15 @@
             for(let t of t_array) {
                 let v_s = v_init; let v_l = v_init;
                 
+                // --- LINE A PERFECT TIMING ---
                 for(let k=0; k<edges.length; k++) {
                     let tk = k * p.Td;
-                    if (k % 2 === 0) { 
-                        v_s += edges[k] * S_eff(t - tk);
-                        v_l += edges[k] * S_eff(t - (tk + p.Td));
-                    } else { 
-                        v_l += edges[k] * S_eff(t - tk);
-                        v_s += edges[k] * S_eff(t - (tk + p.Td));
+                    if (k % 2 === 0) { // Forward wave launches from source
+                        v_s += edges[k] * S(t - tk, effective_tr);
+                        v_l += edges[k] * S(t - (tk + p.Td), effective_tr);
+                    } else { // Backward wave launches from load
+                        v_l += edges[k] * S(t - tk, effective_tr);
+                        v_s += edges[k] * S(t - (tk + p.Td), effective_tr);
                     }
                 }
                 
@@ -257,15 +253,20 @@
 
                 for(let k=0; k<edges.length; k++) {
                     let tk = k * p.Td;
-                    if (k % 2 === 0) { 
-                        v_b_0_fwd += p.Knext * edges[k] * (S_eff(t - tk) - S_eff(t - tk - 2*p.Td));
-                        v_b_L_fwd += p.Kfext * p.Len * edges[k] * P_eff(t - (tk + p.Td));
-                    } else { 
-                        v_b_0_bwd += p.Kfext * p.Len * edges[k] * P_eff(t - (tk + p.Td));
-                        v_b_L_bwd += p.Knext * edges[k] * (S_eff(t - tk) - S_eff(t - tk - 2*p.Td));
+                    if (k % 2 === 0) { // Forward Wave
+                        // NEXT at Near End
+                        v_b_0_fwd += p.Knext * edges[k] * (S(t - tk, effective_tr) - S(t - tk - 2*p.Td, effective_tr));
+                        // FEXT at Far End (Arrives at tk + Td)
+                        v_b_L_fwd += p.Kfext * p.Len * edges[k] * P(t - (tk + p.Td), effective_tr);
+                    } else { // Backward Wave
+                        // FEXT at Near End (Arrives at tk + Td)
+                        v_b_0_bwd += p.Kfext * p.Len * edges[k] * P(t - (tk + p.Td), effective_tr);
+                        // NEXT at Far End
+                        v_b_L_bwd += p.Knext * edges[k] * (S(t - tk, effective_tr) - S(t - tk - 2*p.Td, effective_tr));
                     }
                 }
 
+                // APPLY VICTIM LINE REFLECTION DOUBLING
                 v_b_0_fwd *= p.nearMult;
                 v_b_0_bwd *= p.nearMult;
                 v_b_L_fwd *= p.farMult;
@@ -275,8 +276,14 @@
                 let v_b_L_tot = v_b_L_fwd + v_b_L_bwd;
 
                 pSrc.push({x: t, y: v_s}); pLoad.push({x: t, y: v_l});
-                pBNearFwd.push({x: t, y: v_b_0_fwd}); pBNearBwd.push({x: t, y: v_b_0_bwd}); pBNearTot.push({x: t, y: v_b_0_tot});
-                pBFarFwd.push({x: t, y: v_b_L_fwd}); pBFarBwd.push({x: t, y: v_b_L_bwd}); pBFarTot.push({x: t, y: v_b_L_tot});
+                
+                pBNearFwd.push({x: t, y: v_b_0_fwd});
+                pBNearBwd.push({x: t, y: v_b_0_bwd});
+                pBNearTot.push({x: t, y: v_b_0_tot});
+
+                pBFarFwd.push({x: t, y: v_b_L_fwd});
+                pBFarBwd.push({x: t, y: v_b_L_bwd});
+                pBFarTot.push({x: t, y: v_b_L_tot});
 
                 maxB = Math.max(maxB, Math.abs(v_b_0_tot), Math.abs(v_b_L_tot), Math.abs(v_b_0_fwd), Math.abs(v_b_L_fwd));
             }
@@ -288,6 +295,7 @@
             let absMaxA = Math.max(...pSrc.map(pt=>pt.y), ...pLoad.map(pt=>pt.y), p.vStart, p.vEnd);
             let absMinA = Math.min(...pSrc.map(pt=>pt.y), ...pLoad.map(pt=>pt.y), p.vStart, p.vEnd);
             
+            // Pad the axes slightly so lines don't hug the border perfectly
             chartA.options.scales.y.suggestedMin = absMinA - 0.5;
             chartA.options.scales.y.suggestedMax = absMaxA + 0.5;
 
@@ -297,20 +305,6 @@
             chartB_Far.options.scales.y.suggestedMax = maxB * 1.2;
 
             return { gamma_s, gamma_l, v_inc, maxTime };
-        }
-
-        function drawEdge(t_edge, p, w, h) {
-            if (t_edge < 0 || t_edge > MULTIPLIER_TD * p.Td) return;
-            let bounceIdx = Math.floor(t_edge / p.Td);
-            let isForward = bounceIdx % 2 === 0;
-            let x_pos = (t_edge % p.Td) / p.Td;
-            if (!isForward) x_pos = 1 - x_pos;
-
-            let drawX = 50 + x_pos * (w - 100);
-
-            ctx.beginPath(); ctx.arc(drawX, h/2 - 15, 6, 0, Math.PI*2);
-            ctx.fillStyle = isForward ? '#3b82f6' : '#ef4444'; ctx.fill();
-            ctx.lineWidth = 1.5; ctx.strokeStyle = '#ffffff'; ctx.stroke();
         }
 
         function drawCanvas(t, theory, p) {
@@ -332,8 +326,22 @@
 
             if (t === 0) return;
 
-            drawEdge(t, p, w, h);
-            drawEdge(t - p.pulseWidth, p, w, h);
+            let bounceIdx = Math.floor(t / p.Td);
+            let isForward = bounceIdx % 2 === 0;
+            let timeInTransit = t % p.Td;
+            let x_pos = timeInTransit / p.Td;
+            if (!isForward) x_pos = 1 - x_pos;
+
+            let drawX = 50 + x_pos * (w - 100);
+
+            if (isPaused) {
+                drawX = (bounceIdx % 2 === 0) ? 50 : w-50; 
+                ctx.beginPath(); ctx.arc(drawX, h/2 - 15, 8 + Math.sin(pauseTimer*8)*3, 0, Math.PI*2);
+                ctx.fillStyle = '#fbbf24'; ctx.fill();
+            } else {
+                ctx.beginPath(); ctx.arc(drawX, h/2 - 15, 6, 0, Math.PI*2);
+                ctx.fillStyle = isForward ? '#3b82f6' : '#ef4444'; ctx.fill();
+            }
         }
 
         function updateTimeCharts(t) {
@@ -360,15 +368,28 @@
             const theory = setupTheory(p); 
 
             if (isPlaying) {
-                let next_t = t_anim + (dt * speedMult);
-                
-                if (next_t > theory.maxTime) {
-                    t_anim = theory.maxTime;
-                    isPlaying = false;
-                    btnPlay.innerText = "Play";
-                    btnPlay.className = "px-8 py-1.5 bg-blue-600 text-white font-bold rounded hover:bg-blue-700 shadow transition-colors";
+                if (isPaused) {
+                    pauseTimer -= dt;
+                    if (pauseTimer <= 0) { isPaused = false; t_anim = (Math.floor(t_anim / p.Td) * p.Td) + 0.001; }
                 } else {
-                    t_anim = next_t;
+                    let next_t = t_anim + (dt * speedMult);
+                    let currentBounce = Math.floor(t_anim / p.Td);
+                    let nextBounce = Math.floor(next_t / p.Td);
+                    
+                    if (nextBounce > currentBounce && next_t <= theory.maxTime) {
+                        t_anim = nextBounce * p.Td; 
+                        isPaused = true;
+                        pauseTimer = PAUSE_DURATION / Math.max(0.5, speedMult);
+                    } else {
+                        t_anim = next_t;
+                    }
+
+                    if (t_anim > theory.maxTime) {
+                        t_anim = theory.maxTime;
+                        isPlaying = false;
+                        btnPlay.innerText = "Play";
+                        btnPlay.className = "px-8 py-1.5 bg-blue-600 text-white font-bold rounded hover:bg-blue-700 shadow transition-colors";
+                    }
                 }
             }
 
@@ -387,7 +408,7 @@
         });
 
         function resetSim() {
-            isPlaying = false; t_anim = 0; 
+            isPlaying = false; t_anim = 0; isPaused = false;
             btnPlay.innerText = "Play";
             btnPlay.className = "px-8 py-1.5 bg-blue-600 text-white font-bold rounded hover:bg-blue-700 shadow transition-colors";
             
@@ -407,7 +428,7 @@
             document.getElementById('speed-val').innerText = speedMult.toFixed(1);
         });
 
-        const inputs = ['vstart-input', 'vend-input', 'zs-input', 'z0-input', 'zl-input', 'td-input', 'tr-input', 'pw-input', 'len-input', 'knext-input', 'kfext-input', 'b-near-input', 'b-far-input'];
+        const inputs = ['vstart-input', 'vend-input', 'zs-input', 'z0-input', 'zl-input', 'td-input', 'tr-input', 'len-input', 'knext-input', 'kfext-input', 'b-near-input', 'b-far-input'];
         inputs.forEach(id => {
             document.getElementById(id).addEventListener('change', resetSim);
         });

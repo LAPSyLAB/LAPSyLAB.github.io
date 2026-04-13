@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UTP vs Parallel Cable Simulation</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: #f4f4f9;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            background: #eef2f5;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        canvas {
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            width: 100%;
+        }
+        .graph-container {
+            display: flex;
+            gap: 20px;
+        }
+        .graph {
+            flex: 1;
+            text-align: center;
+        }
+        h1 { font-size: 1.5rem; margin-top: 0; }
+        label { font-weight: bold; }
+        .description { margin-bottom: 20px; line-height: 1.6; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Electromagnetic Interference (EMI) Cancellation</h1>
+    <div class="description" id="dynamic-text">
+        Adjust the noise intensity to see how it affects the data signal.
+    </div>
+
+    <div class="controls">
+        <div class="control-group">
+            <label>Cable Type:</label>
+            <div>
+                <input type="radio" id="parallel" name="cableMode" value="parallel" checked>
+                <label for="parallel" style="font-weight: normal;">Parallel Wires</label>
+            </div>
+            <div>
+                <input type="radio" id="twisted" name="cableMode" value="twisted">
+                <label for="twisted" style="font-weight: normal;">Twisted Pair (UTP)</label>
+            </div>
+        </div>
+        <div class="control-group" style="flex: 0.8;">
+            <label for="emi-slider">External EMI (Noise) Intensity: <span id="emi-value">0</span>%</label>
+            <input type="range" id="emi-slider" min="0" max="100" value="0" style="width: 100%;">
+        </div>
+    </div>
+
+    <canvas id="schematicCanvas" width="760" height="200"></canvas>
+
+    <div class="graph-container">
+        <div class="graph">
+            <strong>Transmitted Signal (Clean)</strong>
+            <canvas id="txCanvas" width="370" height="150"></canvas>
+        </div>
+        <div class="graph">
+            <strong>Received Signal (Differential)</strong>
+            <canvas id="rxCanvas" width="370" height="150"></canvas>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Elements
+    const schematicCanvas = document.getElementById('schematicCanvas');
+    const ctxSchematic = schematicCanvas.getContext('2d');
+    const txCanvas = document.getElementById('txCanvas');
+    const ctxTx = txCanvas.getContext('2d');
+    const rxCanvas = document.getElementById('rxCanvas');
+    const ctxRx = rxCanvas.getContext('2d');
+    const emiSlider = document.getElementById('emi-slider');
+    const emiValue = document.getElementById('emi-value');
+    const modeRadios = document.getElementsByName('cableMode');
+    const dynamicText = document.getElementById('dynamic-text');
+
+    // State
+    let mode = 'parallel';
+    let emiIntensity = 0;
+    let time = 0;
+
+    // Event Listeners
+    emiSlider.addEventListener('input', (e) => {
+        emiIntensity = parseInt(e.target.value);
+        emiValue.innerText = emiIntensity;
+        updateText();
+    });
+
+    modeRadios.forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            mode = e.target.value;
+            updateText();
+        });
+    });
+
+    function updateText() {
+        if (emiIntensity === 0) {
+            dynamicText.innerText = "With no external noise, both cable types transmit a clean signal perfectly.";
+        } else if (mode === 'parallel') {
+            dynamicText.innerHTML = "<strong>Parallel Wires:</strong> The top wire is closer to the noise source, absorbing more interference than the bottom wire. When the receiver calculates the difference, the uneven noise doesn't cancel out, corrupting the data.";
+        } else {
+            dynamicText.innerHTML = "<strong>Twisted Pair:</strong> Both wires physically swap places, exposing them to the exact same average amount of noise. When the receiver calculates the difference, the noise mathematically cancels out perfectly!";
+        }
+    }
+
+    // Drawing Functions
+    function drawSchematic() {
+        ctxSchematic.clearRect(0, 0, schematicCanvas.width, schematicCanvas.height);
+        
+        // Draw Tx and Rx Boxes
+        ctxSchematic.fillStyle = '#333';
+        ctxSchematic.fillRect(20, 60, 80, 80);
+        ctxSchematic.fillRect(660, 60, 80, 80);
+        ctxSchematic.fillStyle = '#fff';
+        ctxSchematic.font = '16px sans-serif';
+        ctxSchematic.fillText('Tx', 45, 105);
+        ctxSchematic.fillText('Rx', 685, 105);
+
+        // Draw Noise Source
+        const noiseX = 380;
+        const noiseY = 30;
+        const pulse = Math.sin(time * 0.1) * 5 * (emiIntensity / 100);
+        
+        ctxSchematic.beginPath();
+        ctxSchematic.arc(noiseX, noiseY, 15 + pulse, 0, Math.PI * 2);
+        ctxSchematic.fillStyle = `rgba(255, 0, 0, ${0.2 + (emiIntensity / 200)})`;
+        ctxSchematic.fill();
+        ctxSchematic.beginPath();
+        ctxSchematic.arc(noiseX, noiseY, 8, 0, Math.PI * 2);
+        ctxSchematic.fillStyle = emiIntensity > 0 ? 'red' : '#999';
+        ctxSchematic.fill();
+        ctxSchematic.fillStyle = '#333';
+        ctxSchematic.fillText('EMI Source', 345, 15);
+
+        // Draw Wires
+        ctxSchematic.lineWidth = 3;
+        const startX = 100;
+        const endX = 660;
+        
+        if (mode === 'parallel') {
+            // Top Wire (More Noise)
+            ctxSchematic.strokeStyle = '#0066cc';
+            ctxSchematic.beginPath();
+            ctxSchematic.moveTo(startX, 80);
+            for(let x = startX; x <= endX; x += 5) {
+                let noise = (Math.random() - 0.5) * (emiIntensity / 5);
+                ctxSchematic.lineTo(x, 80 + noise);
+            }
+            ctxSchematic.stroke();
+
+            // Bottom Wire (Less Noise)
+            ctxSchematic.strokeStyle = '#cc6600';
+            ctxSchematic.beginPath();
+            ctxSchematic.moveTo(startX, 120);
+            for(let x = startX; x <= endX; x += 5) {
+                let noise = (Math.random() - 0.5) * (emiIntensity / 15);
+                ctxSchematic.lineTo(x, 120 + noise);
+            }
+            ctxSchematic.stroke();
+        } else {
+            // Twisted Pair (Equal Noise)
+            ctxSchematic.beginPath();
+            let twistFreq = 0.05;
+            for(let x = startX; x <= endX; x += 2) {
+                let y = 100 + Math.sin(x * twistFreq) * 20;
+                let noise = (Math.random() - 0.5) * (emiIntensity / 8);
+                if(x === startX) ctxSchematic.moveTo(x, y + noise);
+                else ctxSchematic.lineTo(x, y + noise);
+            }
+            ctxSchematic.strokeStyle = '#0066cc';
+            ctxSchematic.stroke();
+
+            ctxSchematic.beginPath();
+            for(let x = startX; x <= endX; x += 2) {
+                let y = 100 + Math.cos((x- (Math.PI / twistFreq / 2)) * twistFreq) * -20;
+                let noise = (Math.random() - 0.5) * (emiIntensity / 8);
+                if(x === startX) ctxSchematic.moveTo(x, y + noise);
+                else ctxSchematic.lineTo(x, y + noise);
+            }
+            ctxSchematic.strokeStyle = '#cc6600';
+            ctxSchematic.stroke();
+        }
+    }
+
+    function drawGraph(ctx, canvas, isReceived) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Grid
+        ctx.strokeStyle = '#eee';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(0, canvas.height / 2);
+        ctx.lineTo(canvas.width, canvas.height / 2);
+        ctx.stroke();
+
+        // Signal Wave
+        ctx.beginPath();
+        ctx.strokeStyle = isReceived && mode === 'parallel' && emiIntensity > 0 ? '#d9381e' : '#28a745';
+        ctx.lineWidth = 2;
+        
+        for (let x = 0; x < canvas.width; x++) {
+            // Base Sine Wave
+            let y = Math.sin((x + time * 2) * 0.05) * 40;
+            
+            // Add Noise if Received, Parallel, and EMI is active
+            if (isReceived && mode === 'parallel' && emiIntensity > 0) {
+                // In parallel, the noise on top wire vs bottom wire is unequal, leaving a residual difference
+                let residualNoise = (Math.random() - 0.5) * (emiIntensity * 0.8);
+                y += residualNoise;
+            }
+            
+            if (x === 0) ctx.moveTo(x, canvas.height / 2 - y);
+            else ctx.lineTo(x, canvas.height / 2 - y);
+        }
+        ctx.stroke();
+    }
+
+    // Animation Loop
+    function animate() {
+        time++;
+        drawSchematic();
+        drawGraph(ctxTx, txCanvas, false); // Clean Transmitted
+        drawGraph(ctxRx, rxCanvas, true);  // Received (Potentially Noisy)
+        requestAnimationFrame(animate);
+    }
+
+    // Start
+    updateText();
+    animate();
+</script>
+</body>
+</html>

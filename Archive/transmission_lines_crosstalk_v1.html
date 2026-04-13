@@ -17,16 +17,16 @@
         
         <div class="mb-4">
             <h1 class="text-2xl font-bold text-slate-900">Transmission Line Crosstalk</h1>
-            <p class="text-sm text-slate-600">Full Pulse Simulation (Direct Line Voltage Injection)</p>
+            <p class="text-sm text-slate-600">Full Pulse Simulation, Line Length, & Reflection Superposition</p>
         </div>
 
         <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-4 bg-slate-50 p-4 rounded-lg border border-slate-200">
             <div>
-                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">Line V Start</label>
+                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">V Start (V)</label>
                 <input type="number" id="vstart-input" value="3.6" step="0.1" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-green-500 text-sm">
             </div>
             <div>
-                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">Line V End</label>
+                <label class="block text-[11px] font-bold uppercase text-slate-500 mb-1">V End (V)</label>
                 <input type="number" id="vend-input" value="0.2" step="0.1" class="w-full p-1.5 border rounded focus:ring-2 focus:ring-green-500 text-sm">
             </div>
             <div>
@@ -112,7 +112,7 @@
 
     <script>
         const NUM_REFLECTIONS = 20;
-        const MULTIPLIER_TD = 10; 
+        const MULTIPLIER_TD = 10; // Show up to 10 * Td to keep graphs clean
         
         let isPlaying = false; let t_anim = 0; let speedMult = 1.0; let lastTimestamp = 0;
         
@@ -198,14 +198,13 @@
             const gamma_s = (p.Zs - p.Z0) / (p.Zs + p.Z0);
             const gamma_l = (p.ZL - p.Z0) / (p.ZL + p.Z0);
             
-            // --- UPDATED LOGIC ---
-            // Bypass the voltage divider. V Start and V End enter the line directly.
-            const v_init = p.vStart; 
-            const v_inc = p.vEnd - p.vStart; 
-            
+            const v_init = p.vStart * (p.ZL / (p.Zs + p.ZL));
+            const v_inc = (p.vEnd - p.vStart) * (p.Z0 / (p.Zs + p.Z0));
             const maxTime = MULTIPLIER_TD * p.Td;
+
             const effective_tr = Math.max(0.01, p.tr);
 
+            // PULSE ABSTRACTION: Superposition of rising and falling edge
             const S_eff = (time) => S(time, effective_tr) - S(time - p.pulseWidth, effective_tr);
             const P_eff = (time) => P(time, effective_tr) - P(time - p.pulseWidth, effective_tr);
 
@@ -220,6 +219,7 @@
             pBNearFwd = []; pBNearBwd = []; pBNearTot = [];
             pBFarFwd = []; pBFarBwd = []; pBFarTot = [];
             
+            // Inject exact boundary timestamps for BOTH edges of the pulse
             let timePoints = new Set();
             for(let i=0; i<=800; i++) timePoints.add((i / 800) * maxTime); 
             for(let k=0; k<=NUM_REFLECTIONS+2; k++) {
@@ -231,7 +231,7 @@
                 ];
                 critical_points.forEach(tp => {
                     timePoints.add(tp);
-                    timePoints.add(tp + p.pulseWidth); 
+                    timePoints.add(tp + p.pulseWidth); // Add the trailing edge points
                 });
             }
             let t_array = Array.from(timePoints).sort((a,b) => a-b).filter(t => t <= maxTime);
@@ -241,12 +241,13 @@
             for(let t of t_array) {
                 let v_s = v_init; let v_l = v_init;
                 
+                // --- LINE A PERFECT TIMING ---
                 for(let k=0; k<edges.length; k++) {
                     let tk = k * p.Td;
-                    if (k % 2 === 0) { 
+                    if (k % 2 === 0) { // Forward wave
                         v_s += edges[k] * S_eff(t - tk);
                         v_l += edges[k] * S_eff(t - (tk + p.Td));
-                    } else { 
+                    } else { // Backward wave
                         v_l += edges[k] * S_eff(t - tk);
                         v_s += edges[k] * S_eff(t - (tk + p.Td));
                     }
@@ -257,10 +258,10 @@
 
                 for(let k=0; k<edges.length; k++) {
                     let tk = k * p.Td;
-                    if (k % 2 === 0) { 
+                    if (k % 2 === 0) { // Forward Wave
                         v_b_0_fwd += p.Knext * edges[k] * (S_eff(t - tk) - S_eff(t - tk - 2*p.Td));
                         v_b_L_fwd += p.Kfext * p.Len * edges[k] * P_eff(t - (tk + p.Td));
-                    } else { 
+                    } else { // Backward Wave
                         v_b_0_bwd += p.Kfext * p.Len * edges[k] * P_eff(t - (tk + p.Td));
                         v_b_L_bwd += p.Knext * edges[k] * (S_eff(t - tk) - S_eff(t - tk - 2*p.Td));
                     }
@@ -299,6 +300,7 @@
             return { gamma_s, gamma_l, v_inc, maxTime };
         }
 
+        // Helper to draw a single traveling edge
         function drawEdge(t_edge, p, w, h) {
             if (t_edge < 0 || t_edge > MULTIPLIER_TD * p.Td) return;
             let bounceIdx = Math.floor(t_edge / p.Td);
@@ -332,7 +334,10 @@
 
             if (t === 0) return;
 
+            // Draw Leading Edge
             drawEdge(t, p, w, h);
+            
+            // Draw Trailing Edge (if it has launched)
             drawEdge(t - p.pulseWidth, p, w, h);
         }
 
