@@ -88,6 +88,31 @@
             font-size: 0.9em;
             margin-top: 5px;
         }
+
+        /* Printout styling */
+        .printout-container {
+            width: 100%;
+            display: flex;
+            gap: 20px;
+        }
+        .printout-box {
+            flex: 1;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #e9ecef;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .printout-box h4 {
+            margin-top: 0;
+            color: #2c3e50;
+            border-bottom: 1px solid #ccc;
+            padding-bottom: 5px;
+        }
+        .list-item { margin-bottom: 5px; }
+        .zero-text { color: #2980b9; font-weight: bold; }
+        .pole-text { color: #c0392b; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -115,6 +140,20 @@
             <h3 style="margin-top: 0; text-align: center;">Amplitudni odziv |H(ω)|</h3>
             <div id="freqresp"></div>
         </div>
+
+        <div class="panel" style="width: 100%;">
+            <h3 style="margin-top: 0; text-align: center;">Trenutni poli in ničle (z = x + jy)</h3>
+            <div class="printout-container">
+                <div class="printout-box">
+                    <h4>Ničle (Zeros)</h4>
+                    <div id="zeros-list"></div>
+                </div>
+                <div class="printout-box">
+                    <h4>Poli (Poles)</h4>
+                    <div id="poles-list"></div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -136,10 +175,9 @@
             .append("g")
             .attr("transform", `translate(${width/2}, ${height/2})`);
 
-        // Skale za Z-Ravnino (od -1.5 do 1.5)
         const scaleZ = d3.scaleLinear().domain([-1.5, 1.5]).range([-width/2 + 20, width/2 - 20]);
         const scaleZInv = d3.scaleLinear().domain([-width/2 + 20, width/2 - 20]).range([-1.5, 1.5]);
-        const scaleZ_Y = d3.scaleLinear().domain([-1.5, 1.5]).range([height/2 - 20, -height/2 + 20]); // Y je obrnjen v SVG
+        const scaleZ_Y = d3.scaleLinear().domain([-1.5, 1.5]).range([height/2 - 20, -height/2 + 20]);
         const scaleZInv_Y = d3.scaleLinear().domain([height/2 - 20, -height/2 + 20]).range([-1.5, 1.5]);
 
         // Izris osi
@@ -153,7 +191,6 @@
             .attr("cy", 0)
             .attr("r", scaleZ(1) - scaleZ(0));
 
-        // Generator križca za pole
         const cross = d3.symbol().type(d3.symbolCross).size(120);
 
         // --- SETUP FREQUENCY RESPONSE SVG ---
@@ -202,6 +239,7 @@
         function updateAll() {
             updateZPlane();
             updateFrequencyResponse();
+            updatePrintout();
         }
 
         function updateZPlane() {
@@ -290,16 +328,53 @@
             pathLine.datum(data).attr("d", lineGenerator);
         }
 
+        // --- IZPIS POLOV IN NIČEL ---
+        function formatComplex(x, y) {
+            const sign = y < 0 ? "-" : "+";
+            const absY = Math.abs(y);
+            const r = Math.sqrt(x*x + y*y);
+            const theta = Math.atan2(y, x) * (180 / Math.PI); // v stopinje
+            
+            return `${x.toFixed(3)} ${sign} j${absY.toFixed(3)} &nbsp;&nbsp;(r=${r.toFixed(3)}, θ=${theta.toFixed(1)}°)`;
+        }
+
+        function updatePrintout() {
+            const zerosContainer = document.getElementById("zeros-list");
+            const polesContainer = document.getElementById("poles-list");
+            
+            zerosContainer.innerHTML = "";
+            polesContainer.innerHTML = "";
+
+            let zCount = 1;
+            let pCount = 1;
+
+            elements.forEach(el => {
+                const text = formatComplex(el.x, el.y);
+                const div = document.createElement("div");
+                div.className = "list-item";
+
+                if (el.type === 'zero') {
+                    div.innerHTML = `<span class="zero-text">z<sub>${zCount++}</sub></span> = ${text}`;
+                    zerosContainer.appendChild(div);
+                } else {
+                    div.innerHTML = `<span class="pole-text">p<sub>${pCount++}</sub></span> = ${text}`;
+                    polesContainer.appendChild(div);
+                }
+            });
+
+            if (zerosContainer.innerHTML === "") zerosContainer.innerHTML = "Ni ničel.";
+            if (polesContainer.innerHTML === "") polesContainer.innerHTML = "Ni polov.";
+        }
+
         // --- GUMBI ---
         document.getElementById('add-zero').addEventListener('click', () => { addPair('zero', 0.5, 0.5); });
         document.getElementById('add-pole').addEventListener('click', () => { addPair('pole', -0.5, 0.5); });
         document.getElementById('clear-all').addEventListener('click', () => { elements = []; updateAll(); });
 
-        // --- ZAČETNO STANJE IN PRVI IZRIS (zdaj se sproži po tem, ko so SVG-ji pripravljeni) ---
+        // --- ZAČETNO STANJE IN PRVI IZRIS ---
         const angle = Math.PI / 3;
         addPair('zero', Math.cos(angle), Math.sin(angle));
         addPair('pole', 0.85 * Math.cos(angle), 0.85 * Math.sin(angle));
-        // Klic updateAll() je že vsebovan znotraj addPair.
     </script>
 </body>
 </html>
