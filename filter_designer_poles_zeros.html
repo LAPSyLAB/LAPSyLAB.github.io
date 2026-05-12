@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="sl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interaktivno načrtovanje filtrov (Z-ravnina)</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f9;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+        }
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 20px;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        .panel {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .controls {
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 20px;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            background-color: #3498db;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        button:hover { background-color: #2980b9; }
+        button.danger { background-color: #e74c3c; }
+        button.danger:hover { background-color: #c0392b; }
+        
+        .label-check {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        
+        svg {
+            background-color: #fafafa;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        
+        /* Z-Plane styling */
+        .axis line, .axis path { stroke: #ccc; }
+        .unit-circle { fill: none; stroke: #bdc3c7; stroke-width: 2; stroke-dasharray: 5,5; }
+        
+        .pole { stroke: #c0392b; stroke-width: 2.5; fill: none; cursor: grab; }
+        .zero { stroke: #2980b9; stroke-width: 2.5; fill: white; cursor: grab; }
+        .pole:active, .zero:active { cursor: grabbing; }
+        
+        /* Response styling */
+        .line-response { fill: none; stroke: #27ae60; stroke-width: 3; }
+        
+        p.help-text {
+            text-align: center;
+            color: #7f8c8d;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Interaktivno načrtovanje filtrov: Poli in Ničle</h1>
+    
+    <div class="controls">
+        <button id="add-zero">Dodaj Ničlo (O)</button>
+        <button id="add-pole">Dodaj Pol (X)</button>
+        <button id="clear-all" class="danger">Počisti vse</button>
+        <label class="label-check">
+            <input type="checkbox" id="auto-conjugate" checked>
+            Konjugirani pari (Zrcaljenje)
+        </label>
+    </div>
+    <p class="help-text">Nasvet: Z miško povlecite pole in ničle. Dvokliknite element, da ga izbrišete.</p>
+
+    <div class="container">
+        <div class="panel">
+            <h3 style="margin-top: 0; text-align: center;">Z-Ravnina</h3>
+            <div id="zplane"></div>
+        </div>
+        
+        <div class="panel">
+            <h3 style="margin-top: 0; text-align: center;">Amplitudni odziv |H(ω)|</h3>
+            <div id="freqresp"></div>
+        </div>
+    </div>
+
+    <script>
+        // Nastavitve dimenzij
+        const width = 400, height = 400;
+        const margin = {top: 20, right: 20, bottom: 40, left: 50};
+        const innerWidth = width - margin.left - margin.right;
+        const innerHeight = height - margin.top - margin.bottom;
+
+        // Podatkovna struktura za elemente (poli in ničle)
+        let elements = [];
+        let idCounter = 0;
+
+        // --- SETUP Z-PLANE SVG ---
+        const svgZ = d3.select("#zplane")
+            .append("svg")
+            .attr("width", width)
+            .attr("height", height)
+            .append("g")
+            .attr("transform", `translate(${width/2}, ${height/2})`);
+
+        // Skale za Z-Ravnino (od -1.5 do 1.5)
+        const scaleZ = d3.scaleLinear().domain([-1.5, 1.5]).range([-width/2 + 20, width/2 - 20]);
+        const scaleZInv = d3.scaleLinear().domain([-width/2 + 20, width/2 - 20]).range([-1.5, 1.5]);
+        const scaleZ_Y = d3.scaleLinear().domain([-1.5, 1.5]).range([height/2 - 20, -height/2 + 20]); // Y je obrnjen v SVG
+        const scaleZInv_Y = d3.scaleLinear().domain([height/2 - 20, -height/2 + 20]).range([-1.5, 1.5]);
+
+        // Izris osi
+        svgZ.append("line").attr("x1", scaleZ(-1.5)).attr("y1", 0).attr("x2", scaleZ(1.5)).attr("y2", 0).attr("stroke", "#ccc");
+        svgZ.append("line").attr("x1", 0).attr("y1", scaleZ_Y(-1.5)).attr("x2", 0).attr("y2", scaleZ_Y(1.5)).attr("stroke", "#ccc");
+        
+        // Enotska krožnica
+        svgZ.append("circle")
+            .attr("class", "unit-circle")
+            .attr("cx", 0)
+            .attr("cy", 0)
+            .attr("r", scaleZ(1) - scaleZ(0));
+
+        // Generator križca za pole
+        const cross = d3.symbol().type(d3.symbolCross).size(120);
+
+        // --- SETUP FREQUENCY RESPONSE SVG ---
+        const svgFreq = d3.select("#freqresp")
+            .append("svg")
+            .attr("width", width)
+            .attr("height", height)
+            .append("g")
+            .attr("transform", `translate(${margin.left}, ${margin.top})`);
+
+        const scaleW = d3.scaleLinear().domain([0, Math.PI]).range([0, innerWidth]);
+        let scaleMag = d3.scaleLinear().domain([0, 2]).range([innerHeight, 0]);
+
+        const xAxis = svgFreq.append("g")
+            .attr("transform", `translate(0, ${innerHeight})`)
+            .call(d3.axisBottom(scaleW).tickValues([0, Math.PI/4, Math.PI/2, 3*Math.PI/4, Math.PI])
+                .tickFormat(d => {
+                    if(d === 0) return "0";
+                    if(d === Math.PI/4) return "π/4";
+                    if(d === Math.PI/2) return "π/2";
+                    if(d === 3*Math.PI/4) return "3π/4";
+                    if(d === Math.PI) return "π";
+                    return d;
+                }));
+        
+        svgFreq.append("text").attr("x", innerWidth/2).attr("y", innerHeight + 35).style("text-anchor", "middle").text("Krožna frekvenca ω");
+
+        const yAxisGroup = svgFreq.append("g").call(d3.axisLeft(scaleMag));
+        const pathLine = svgFreq.append("path").attr("class", "line-response");
+
+        // --- FUNKCIJE ---
+        function addPair(type, x, y) {
+            const isConjugate = document.getElementById('auto-conjugate').checked;
+            const id1 = idCounter++;
+            
+            if (isConjugate && Math.abs(y) > 0.01) {
+                const id2 = idCounter++;
+                elements.push({ id: id1, type: type, x: x, y: y, conjugateId: id2 });
+                elements.push({ id: id2, type: type, x: x, y: -y, conjugateId: id1 });
+            } else {
+                elements.push({ id: id1, type: type, x: x, y: y, conjugateId: null });
+            }
+            updateAll();
+        }
+
+        function updateAll() {
+            updateZPlane();
+            updateFrequencyResponse();
+        }
+
+        function updateZPlane() {
+            const nodes = svgZ.selectAll(".node")
+                .data(elements, d => d.id);
+
+            nodes.exit().remove();
+
+            const nodesEnter = nodes.enter()
+                .append("g")
+                .attr("class", "node")
+                .call(d3.drag()
+                    .on("drag", function(event, d) {
+                        let newX = scaleZInv(event.x);
+                        let newY = scaleZInv_Y(event.y);
+                        
+                        if (d.type === 'pole') {
+                            const r = Math.sqrt(newX*newX + newY*newY);
+                            if (r > 0.98) {
+                                newX *= 0.98 / r;
+                                newY *= 0.98 / r;
+                            }
+                        }
+
+                        d.x = newX;
+                        d.y = newY;
+
+                        if (document.getElementById('auto-conjugate').checked && d.conjugateId !== null) {
+                            const conj = elements.find(e => e.id === d.conjugateId);
+                            if (conj) {
+                                conj.x = newX;
+                                conj.y = -newY;
+                            }
+                        }
+                        updateAll();
+                    })
+                )
+                .on("dblclick", function(event, d) {
+                    elements = elements.filter(e => e.id !== d.id && e.id !== d.conjugateId);
+                    updateAll();
+                });
+
+            nodesEnter.each(function(d) {
+                if (d.type === 'zero') {
+                    d3.select(this).append("circle").attr("r", 6).attr("class", "zero");
+                } else {
+                    d3.select(this).append("path").attr("d", cross).attr("class", "pole").attr("transform", "rotate(45)");
+                }
+            });
+
+            const allNodes = nodesEnter.merge(nodes);
+            allNodes.attr("transform", d => `translate(${scaleZ(d.x)}, ${scaleZ_Y(d.y)})`);
+        }
+
+        function updateFrequencyResponse() {
+            const resolution = 200;
+            const data = [];
+            
+            for (let i = 0; i <= resolution; i++) {
+                const w = (i / resolution) * Math.PI;
+                const zx = Math.cos(w);
+                const zy = Math.sin(w);
+                
+                let num = 1; 
+                let den = 1; 
+                
+                elements.forEach(el => {
+                    const dist = Math.sqrt(Math.pow(zx - el.x, 2) + Math.pow(zy - el.y, 2));
+                    if (el.type === 'zero') num *= dist;
+                    if (el.type === 'pole') den *= dist;
+                });
+                
+                const mag = num / den;
+                data.push({ w: w, mag: mag });
+            }
+
+            const maxMag = d3.max(data, d => d.mag);
+            const upperLimit = maxMag === 1 && elements.length === 0 ? 2 : Math.max(1.5, maxMag * 1.1);
+            scaleMag.domain([0, upperLimit]);
+            yAxisGroup.call(d3.axisLeft(scaleMag));
+
+            const lineGenerator = d3.line()
+                .x(d => scaleW(d.w))
+                .y(d => scaleMag(d.mag));
+
+            pathLine.datum(data).attr("d", lineGenerator);
+        }
+
+        // --- GUMBI ---
+        document.getElementById('add-zero').addEventListener('click', () => { addPair('zero', 0.5, 0.5); });
+        document.getElementById('add-pole').addEventListener('click', () => { addPair('pole', -0.5, 0.5); });
+        document.getElementById('clear-all').addEventListener('click', () => { elements = []; updateAll(); });
+
+        // --- ZAČETNO STANJE IN PRVI IZRIS (zdaj se sproži po tem, ko so SVG-ji pripravljeni) ---
+        const angle = Math.PI / 3;
+        addPair('zero', Math.cos(angle), Math.sin(angle));
+        addPair('pole', 0.85 * Math.cos(angle), 0.85 * Math.sin(angle));
+        // Klic updateAll() je že vsebovan znotraj addPair.
+    </script>
+</body>
+</html>
