@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="sl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FFT Radix-2 DIT (N=8) Vizualizacija</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f9;
+            margin: 0;
+            padding: 10px 20px;
+            color: #333;
+        }
+        h1 { text-align: center; color: #2c3e50; margin-top: 5px; margin-bottom: 10px;}
+        .container {
+            max-width: 950px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #e9ecef;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        .status-box {
+            flex: 1;
+            min-width: 300px;
+            padding: 10px;
+            background: #fff;
+            border-left: 4px solid #8e44ad;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .toggle-control {
+            background: #fff;
+            padding: 10px 15px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+        }
+        button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            background-color: #8e44ad;
+            color: white;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        button:hover { background-color: #9b59b6; }
+        button:disabled { background-color: #bdc3c7; cursor: not-allowed; }
+        
+        #svg-container {
+            background-color: #ffffff;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            text-align: center;
+            overflow: hidden;
+        }
+        
+        /* D3 SVG Elementi */
+        .node circle { fill: #34495e; stroke: #fff; stroke-width: 2px; }
+        .node text { font-size: 13px; font-family: monospace; fill: #2c3e50; font-weight: bold;}
+        .link { fill: none; stroke: #bdc3c7; stroke-width: 2px; }
+        .link.active { stroke: #3498db; stroke-width: 3px; }
+        .link.active.bot { stroke: #e74c3c; } /* Spodnja veja (odštevanje) */
+        
+        .twiddle-text { font-size: 12px; font-family: monospace; fill: #d35400; font-weight: bold; }
+        .minus-one { font-size: 11px; font-family: monospace; fill: #c0392b; font-weight: bold;}
+        
+        .box-highlight { fill: #f1c40f; opacity: 0.15; stroke: #f39c12; stroke-width: 2px; stroke-dasharray: 4,4; rx: 8px; ry: 8px;}
+    </style>
+</head>
+<body>
+
+    <h1>Hitra Fourierova transformacija (FFT Radix-2 DIT) za N=8</h1>
+    
+    <div class="container">
+        <div class="controls">
+            <label class="toggle-control">
+                <input type="checkbox" id="toggle-bitrev" checked>
+                Bit-Reversal mešanje na vhodu
+            </label>
+            
+            <div>
+                <button id="btn-next">Naslednji korak ➔</button>
+                <button id="btn-reset" style="background-color: #95a5a6; margin-left:5px;">Ponastavi</button>
+            </div>
+            
+            <div class="status-box">
+                <strong id="status-title">Korak 0: Začetni podatki</strong><br>
+                <span id="status-desc">Vhodni signal pripravimo za obdelavo. Opazujte indekse na levi strani!</span>
+            </div>
+        </div>
+
+        <div id="svg-container"></div>
+    </div>
+
+    <script>
+        const width = 900, height = 500;
+        const margin = { top: 40, right: 80, bottom: 40, left: 80 };
+        const innerW = width - margin.left - margin.right;
+        const innerH = height - margin.top - margin.bottom;
+
+        const N = 8;
+        const stages = 3; // log2(8)
+
+        // Skale
+        const xScale = d3.scaleLinear().domain([0, stages]).range([0, innerW]);
+        const yScale = d3.scaleLinear().domain([0, N - 1]).range([0, innerH]);
+
+        // Bit-reversal tabela za N=8
+        const bitRev = [0, 4, 2, 6, 1, 5, 3, 7];
+        const normal = [0, 1, 2, 3, 4, 5, 6, 7];
+
+        const svg = d3.select("#svg-container").append("svg")
+            .attr("width", width)
+            .attr("height", height)
+            .append("g")
+            .attr("transform", `translate(${margin.left},${margin.top})`);
+
+        // Podatkovne strukture
+        let nodes = [];
+        for (let s = 0; s <= stages; s++) {
+            for (let i = 0; i < N; i++) {
+                nodes.push({ stage: s, idx: i, id: `n_${s}_${i}` });
+            }
+        }
+
+        let links = [];
+        for (let s = 1; s <= stages; s++) {
+            let halfSize = Math.pow(2, s - 1);
+            let groupSize = Math.pow(2, s);
+            
+            for (let base = 0; base < N; base += groupSize) {
+                for (let k = 0; k < halfSize; k++) {
+                    let topIdx = base + k;
+                    let botIdx = base + k + halfSize;
+                    
+                    // Indeks za Twiddle faktor: k * (N / groupSize)
+                    let twiddleK = k * (N / groupSize);
+
+                    // Ravna zgornja (Top -> Top)
+                    links.push({ source: {s: s-1, i: topIdx}, target: {s: s, i: topIdx}, stage: s, type: 'top', w: null });
+                    // Diagonala gor (Bot -> Top)
+                    links.push({ source: {s: s-1, i: botIdx}, target: {s: s, i: topIdx}, stage: s, type: 'cross_up', w: twiddleK });
+                    // Diagonala dol (Top -> Bot)
+                    links.push({ source: {s: s-1, i: topIdx}, target: {s: s, i: botIdx}, stage: s, type: 'cross_down', w: null });
+                    // Ravna spodnja (Bot -> Bot)
+                    links.push({ source: {s: s-1, i: botIdx}, target: {s: s, i: botIdx}, stage: s, type: 'bot', w: twiddleK });
+                }
+            }
+        }
+
+        // --- IZRIS ---
+        // Skupine za sloje, da se črte rišejo pod točkami
+        const gHighlights = svg.append("g").attr("class", "highlights");
+        const gLinks = svg.append("g").attr("class", "links");
+        const gTwiddles = svg.append("g").attr("class", "twiddles");
+        const gNodes = svg.append("g").attr("class", "nodes");
+
+        // Risanje črt
+        const linkPaths = gLinks.selectAll(".link")
+            .data(links)
+            .enter().append("path")
+            .attr("class", "link")
+            .attr("d", d => {
+                let x1 = xScale(d.source.s), y1 = yScale(d.source.i);
+                let x2 = xScale(d.target.s), y2 = yScale(d.target.i);
+                return `M${x1},${y1} L${x2},${y2}`;
+            })
+            .style("opacity", 0); // Na začetku skrito
+
+        // Risanje Twiddle faktorjev
+        const twiddleTexts = gTwiddles.selectAll(".twiddle-text")
+            .data(links.filter(d => d.type === 'cross_up' || d.type === 'bot'))
+            .enter().append("g")
+            .style("opacity", 0);
+
+        // Oznake W_N^k (samo na križanjih iz spodnjega vozlišča)
+        twiddleTexts.filter(d => d.type === 'cross_up').append("text")
+            .attr("class", "twiddle-text")
+            .attr("x", d => xScale(d.source.s) + 15)
+            .attr("y", d => yScale(d.source.i) - 5)
+            .text(d => `W₈${d.w===0 ? '⁰' : d.w===1 ? '¹' : d.w===2 ? '²' : '³'}`);
+
+        // Oznaka -1 na spodnji veji
+        twiddleTexts.filter(d => d.type === 'bot').append("text")
+            .attr("class", "minus-one")
+            .attr("x", d => xScale(d.target.s) - 20)
+            .attr("y", d => yScale(d.target.i) - 5)
+            .text("-1");
+
+        // Risanje vozlišč
+        const nodeElements = gNodes.selectAll(".node")
+            .data(nodes)
+            .enter().append("g")
+            .attr("class", "node")
+            .attr("transform", d => `translate(${xScale(d.stage)},${yScale(d.idx)})`);
+
+        nodeElements.append("circle").attr("r", 5);
+
+        // Vhodne in izhodne oznake
+        const labelIn = nodeElements.filter(d => d.stage === 0).append("text")
+            .attr("x", -15).attr("y", 4).attr("text-anchor", "end");
+            
+        const labelOut = nodeElements.filter(d => d.stage === 3).append("text")
+            .attr("x", 15).attr("y", 4).attr("text-anchor", "start");
+
+        function updateLabels() {
+            const isBitRev = document.getElementById("toggle-bitrev").checked;
+            const inOrder = isBitRev ? bitRev : normal;
+            const outOrder = isBitRev ? normal : bitRev;
+
+            labelIn.text(d => `x[${inOrder[d.idx]}]`);
+            labelOut.text(d => `X[${outOrder[d.idx]}]`);
+            
+            // Poudari rdeče, če ni v naravnem vrstnem redu
+            labelIn.style("fill", isBitRev ? "#e74c3c" : "#2c3e50");
+            labelOut.style("fill", !isBitRev ? "#e74c3c" : "#2c3e50");
+        }
+
+        updateLabels();
+        document.getElementById("toggle-bitrev").addEventListener("change", updateLabels);
+
+        // --- ANIMACIJA / STANJA ---
+        let currentState = 0;
+        let highlights = [];
+
+        const descriptions = [
+            { t: "Korak 0: Začetni podatki", d: "Prikazana je struktura 8-točkovnega FFT. Vklopite ali izklopite Bit-Reversal, da vidite razliko! Standardni DIT algoritem zahteva premešan vhod za urejen izhod." },
+            { t: "Korak 1: Deli in vladaj (Razdelitev na 2)", d: "Signal smo najprej razdelili na sode in lihe indekse (2x N=4), nato pa vsakega od teh še enkrat (4x N=2). Zato na začetku združujemo pare (npr. x[0] in x[4])." },
+            { t: "Korak 2: Prva stopnja (4x 2-točkovni FFT)", d: "Izračunamo najosnovnejše 'metuljčke' (butterflies). Vsak metuljček vzame dva vzorca in vrne vsoto in razliko (Twiddle faktor W₈⁰ = 1)." },
+            { t: "Korak 3: Druga stopnja (2x 4-točkovni FFT)", d: "Rezultate prejšnje stopnje sedaj križno združimo v dve 4-točkovni transformaciji. Tu se že pojavijo kompleksni Twiddle faktorji (W₈⁰ in W₈²)." },
+            { t: "Korak 4: Tretja stopnja (1x 8-točkovni FFT)", d: "Končni korak! Sestavimo oba 4-točkovna rezultata v eno 8-točkovno transformacijo. Izhod X[k] je (zaradi pametnega mešanja na začetku) zdaj lepo po vrsti!" }
+        ];
+
+        function renderState() {
+            const btn = document.getElementById("btn-next");
+            document.getElementById("status-title").innerText = descriptions[currentState].t;
+            document.getElementById("status-desc").innerHTML = descriptions[currentState].d;
+
+            // Prikaz povezav glede na stopnjo
+            linkPaths.transition().duration(800)
+                .style("opacity", d => d.stage <= currentState ? 1 : 0)
+                .attr("class", d => {
+                    let cls = "link";
+                    if (d.stage === currentState) cls += " active";
+                    if (d.stage === currentState && (d.type === 'bot' || d.type === 'cross_down')) cls += " bot";
+                    return cls;
+                });
+
+            // Prikaz Twiddle faktorjev
+            twiddleTexts.transition().duration(800)
+                .style("opacity", d => {
+                    if (d.stage < currentState) return 0.4;
+                    if (d.stage === currentState) return 1;
+                    return 0;
+                });
+
+            // Vizualni bloki (Highlight) za "Deli in vladaj"
+            gHighlights.selectAll("*").remove();
+            if (currentState > 0 && currentState < 4) {
+                let boxHeight = Math.pow(2, currentState) * (innerH / 7); // višina posameznega bloka
+                let numBoxes = N / Math.pow(2, currentState);
+                let boxWidth = innerW / stages;
+
+                for (let b = 0; b < numBoxes; b++) {
+                    gHighlights.append("rect")
+                        .attr("class", "box-highlight")
+                        .attr("x", xScale(currentState - 1) - 10)
+                        .attr("y", b * Math.pow(2, currentState) * (innerH / 7) - 15)
+                        .attr("width", boxWidth + 20)
+                        .attr("height", boxHeight + 30)
+                        .style("opacity", 0)
+                        .transition().duration(500).style("opacity", 1);
+                }
+            }
+
+            if (currentState >= 4) {
+                btn.disabled = true;
+                btn.innerText = "Zaključeno";
+            }
+        }
+
+        document.getElementById("btn-next").addEventListener("click", () => {
+            if (currentState < 4) { currentState++; renderState(); }
+        });
+
+        document.getElementById("btn-reset").addEventListener("click", () => {
+            currentState = 0;
+            document.getElementById("btn-next").disabled = false;
+            document.getElementById("btn-next").innerText = "Naslednji korak ➔";
+            renderState();
+        });
+
+        // Začetni render
+        renderState();
+    </script>
+</body>
+</html>

@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="sl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FFT Deli in Vladaj (Divide & Conquer)</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f9;
+            margin: 0;
+            padding: 15px;
+            color: #333;
+        }
+        h1 { text-align: center; color: #2c3e50; margin-top: 0; margin-bottom: 10px;}
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #e9ecef;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+        .status-box {
+            flex: 1;
+            margin-left: 20px;
+            padding: 10px;
+            background: #fff;
+            border-left: 4px solid #3498db;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            background-color: #3498db;
+            color: white;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        button:hover { background-color: #2980b9; }
+        button:disabled { background-color: #bdc3c7; cursor: not-allowed; }
+        
+        #svg-container {
+            background-color: #ffffff;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            text-align: center;
+            overflow: hidden;
+            padding-top: 10px;
+        }
+        
+        /* D3 Elements */
+        .node-rect { fill: #ecf0f1; stroke: #bdc3c7; stroke-width: 1.5px; rx: 4px; }
+        .node-text { font-size: 12px; font-family: monospace; font-weight: bold; fill: #2c3e50; text-anchor: middle; dominant-baseline: central; }
+        
+        .group-box { fill: transparent; stroke-width: 2px; stroke-dasharray: 4,4; rx: 8px; }
+        .group-divide { stroke: #3498db; fill: #3498db; fill-opacity: 0.05;}
+        .group-conquer { stroke: #27ae60; fill: #27ae60; fill-opacity: 0.05;}
+        
+        .link-divide { fill: none; stroke: #95a5a6; stroke-width: 1.5px; opacity: 0.6; }
+        .link-conquer { fill: none; stroke: #27ae60; stroke-width: 1.5px; opacity: 0.8; }
+        .link-conquer-bot { stroke: #e74c3c; stroke-dasharray: 4,2; }
+        
+        .twiddle-text { font-size: 10px; font-family: monospace; fill: #d35400; font-weight: bold; }
+        
+        .col-title { font-size: 14px; font-weight: bold; fill: #34495e; text-anchor: middle; }
+    </style>
+</head>
+<body>
+
+    <h1>FFT pristop "Deli in vladaj" (Divide & Conquer)</h1>
+    
+    <div class="container">
+        <div class="controls">
+            <div>
+                <button id="btn-next">Naslednji korak ➔</button>
+                <button id="btn-reset" style="background-color: #95a5a6; margin-left:5px;">Ponastavi</button>
+            </div>
+            <div class="status-box">
+                <strong id="status-title">Korak 0: Začetni problem (N=8)</strong><br>
+                <span id="status-desc">Imamo vhodni signal x[n] z 8 vzorci. Izračun v enem kosu bi bil računsko zahteven (N² = 64 operacij).</span>
+            </div>
+        </div>
+        <div id="svg-container"></div>
+    </div>
+
+    <script>
+        const width = 1060, height = 550;
+        const svg = d3.select("#svg-container").append("svg")
+            .attr("width", width).attr("height", height);
+
+        // --- PODATKOVNI MODEL ---
+        // Vrednosti in imena za vsako stopnjo (Stolpci 0 do 5)
+        const colsData = [
+            ["x[0]", "x[1]", "x[2]", "x[3]", "x[4]", "x[5]", "x[6]", "x[7]"], // Col 0: Original
+            ["x[0]", "x[2]", "x[4]", "x[6]", "x[1]", "x[3]", "x[5]", "x[7]"], // Col 1: Sodi/Lihi
+            ["x[0]", "x[4]", "x[2]", "x[6]", "x[1]", "x[5]", "x[3]", "x[7]"], // Col 2: SodiSodi/LihiSodi...
+            ["X₂[0]", "X₂[1]", "X₂[0]", "X₂[1]", "X₂[0]", "X₂[1]", "X₂[0]", "X₂[1]"], // Col 3: DFT-2
+            ["X₄[0]", "X₄[1]", "X₄[2]", "X₄[3]", "X₄[0]", "X₄[1]", "X₄[2]", "X₄[3]"], // Col 4: DFT-4
+            ["X₈[0]", "X₈[1]", "X₈[2]", "X₈[3]", "X₈[4]", "X₈[5]", "X₈[6]", "X₈[7]"]  // Col 5: DFT-8
+        ];
+
+        // Pomožna funkcija za pozicije (x,y) glede na stolpec in indeks [0-7]
+        function getPos(col, idx) {
+            let x = 60 + col * 180; // Razmik med stolpci
+            let y = 0;
+            // Center višine je pri Y=290. Širina polja je 40, višina 24, razmik 6.
+            if (col === 0 || col === 5) {
+                y = 290 + (idx - 3.5) * 32; // 1 skupina po 8
+            } else if (col === 1 || col === 4) {
+                let grp = Math.floor(idx / 4);
+                let subIdx = idx % 4;
+                let c = grp === 0 ? 180 : 400; // 2 skupini po 4
+                y = c + (subIdx - 1.5) * 32;
+            } else if (col === 2 || col === 3) {
+                let grp = Math.floor(idx / 2);
+                let subIdx = idx % 2;
+                let c = 125 + grp * 110; // 4 skupine po 2 (125, 235, 345, 455)
+                y = c + (subIdx - 0.5) * 32;
+            }
+            return {x, y};
+        }
+
+        // 1. VOZLIŠČA (NODES) IN SKUPINE (GROUPS)
+        const nodes = [];
+        const groups = [];
+        
+        for (let c = 0; c < 6; c++) {
+            for (let i = 0; i < 8; i++) {
+                let p = getPos(c, i);
+                nodes.push({ col: c, idx: i, txt: colsData[c][i], x: p.x, y: p.y });
+            }
+            // Določanje bounding boxov za skupine (vizualni prikaz "blokov")
+            if (c === 0 || c === 5) {
+                let yMin = getPos(c, 0).y, yMax = getPos(c, 7).y;
+                groups.push({ col: c, x: getPos(c,0).x, y: yMin, h: yMax-yMin, type: c<3?'divide':'conquer' });
+            } else if (c === 1 || c === 4) {
+                let yMin1 = getPos(c, 0).y, yMax1 = getPos(c, 3).y;
+                let yMin2 = getPos(c, 4).y, yMax2 = getPos(c, 7).y;
+                groups.push({ col: c, x: getPos(c,0).x, y: yMin1, h: yMax1-yMin1, type: c<3?'divide':'conquer' });
+                groups.push({ col: c, x: getPos(c,0).x, y: yMin2, h: yMax2-yMin2, type: c<3?'divide':'conquer' });
+            } else if (c === 2 || c === 3) {
+                for(let g=0; g<4; g++) {
+                    let yMin = getPos(c, g*2).y, yMax = getPos(c, g*2+1).y;
+                    groups.push({ col: c, x: getPos(c,0).x, y: yMin, h: yMax-yMin, type: c<3?'divide':'conquer' });
+                }
+            }
+        }
+
+        // 2. POVEZAVE (LINKS)
+        const divideLinks = [];
+        const mapC0_C1 = [0, 4, 1, 5, 2, 6, 3, 7]; // Kam gredo elementi (C0 -> C1)
+        const mapC1_C2 = [0, 2, 1, 3, 4, 6, 5, 7]; // C1 -> C2
+
+        mapC0_C1.forEach((t, s) => { divideLinks.push({ cStart: 0, s: s, t: t }); });
+        mapC1_C2.forEach((t, s) => { divideLinks.push({ cStart: 1, s: s, t: t }); });
+
+        const conquerLinks = [];
+        // C2 -> C3 (DFT-2)
+        for (let b = 0; b < 8; b+=2) {
+            conquerLinks.push({ cStart: 2, s: b, t: b });
+            conquerLinks.push({ cStart: 2, s: b+1, t: b });
+            conquerLinks.push({ cStart: 2, s: b, t: b+1 });
+            conquerLinks.push({ cStart: 2, s: b+1, t: b+1, isBot: true });
+        }
+        // C3 -> C4 (DFT-4)
+        for (let b = 0; b < 8; b+=4) {
+            for (let i = 0; i < 2; i++) {
+                conquerLinks.push({ cStart: 3, s: b+i, t: b+i });
+                conquerLinks.push({ cStart: 3, s: b+i+2, t: b+i, twiddle: `W₄${i==0?'⁰':'¹'}` });
+                conquerLinks.push({ cStart: 3, s: b+i, t: b+i+2 });
+                conquerLinks.push({ cStart: 3, s: b+i+2, t: b+i+2, isBot: true });
+            }
+        }
+        // C4 -> C5 (DFT-8)
+        for (let i = 0; i < 4; i++) {
+            const exp = i===0?'⁰':i===1?'¹':i===2?'²':'³';
+            conquerLinks.push({ cStart: 4, s: i, t: i });
+            conquerLinks.push({ cStart: 4, s: i+4, t: i, twiddle: `W₈${exp}` });
+            conquerLinks.push({ cStart: 4, s: i, t: i+4 });
+            conquerLinks.push({ cStart: 4, s: i+4, t: i+4, isBot: true });
+        }
+
+        // --- IZRIS Z D3 ---
+        const linkGenHover = d3.linkHorizontal().x(d => d.x).y(d => d.y); // Za "Divide" fazo
+        
+        // Risalna platna (skupine), da so črte spodaj in okvirji na vrhu
+        const gLinks = svg.append("g").attr("id", "links-layer");
+        const gGroups = svg.append("g").attr("id", "groups-layer");
+        const gNodes = svg.append("g").attr("id", "nodes-layer");
+
+        // Naslovi stolpcev
+        const titles = ["Vhod (N=8)", "Razcep (2x N=4)", "Razcep (4x N=2)", "Rešitev (4x DFT-2)", "Zlivanje (2x DFT-4)", "Izhod (1x DFT-8)"];
+        svg.selectAll(".col-title").data(titles).enter().append("text")
+            .attr("class", "col-title").attr("y", 30).attr("x", (d,i) => 60 + i*180).text(d => d)
+            .style("opacity", 0).attr("id", (d,i) => `title-c${i}`);
+
+        // Izris skupin (Bounding boxes)
+        gGroups.selectAll(".group-box").data(groups).enter().append("rect")
+            .attr("class", d => `group-box group-${d.type}`)
+            .attr("x", d => d.x - 25).attr("y", d => d.y - 18)
+            .attr("width", 50).attr("height", d => d.h + 36)
+            .style("opacity", 0).attr("id", d => `group-c${d.col}`);
+
+        // Izris Divide povezav
+        gLinks.selectAll(".link-divide").data(divideLinks).enter().append("path")
+            .attr("class", "link-divide")
+            .attr("d", d => {
+                let p1 = getPos(d.cStart, d.s); let p2 = getPos(d.cStart+1, d.t);
+                return linkGenHover({source: {x: p1.x+20, y: p1.y}, target: {x: p2.x-20, y: p2.y}});
+            })
+            .style("opacity", 0).attr("id", d => `link-div-c${d.cStart}`);
+
+        // Izris Conquer povezav (Metuljčki)
+        const conqGroup = gLinks.selectAll(".g-conq").data(conquerLinks).enter().append("g")
+            .style("opacity", 0).attr("id", d => `link-conq-c${d.cStart}`);
+
+        conqGroup.append("path")
+            .attr("class", d => d.isBot ? "link-conquer link-conquer-bot" : "link-conquer")
+            .attr("d", d => {
+                let p1 = getPos(d.cStart, d.s); let p2 = getPos(d.cStart+1, d.t);
+                return `M${p1.x+20},${p1.y} L${p2.x-20},${p2.y}`;
+            });
+
+        // Twiddle faktorji (besedilo na črtah)
+        conqGroup.filter(d => d.twiddle).append("text")
+            .attr("class", "twiddle-text")
+            .attr("x", d => getPos(d.cStart, d.s).x + 35)
+            .attr("y", d => getPos(d.cStart, d.s).y - 5)
+            .text(d => d.twiddle);
+
+        // Izris vozlišč
+        const nodeGs = gNodes.selectAll(".node-g").data(nodes).enter().append("g")
+            .attr("transform", d => `translate(${d.x},${d.y})`)
+            .style("opacity", 0).attr("id", d => `node-c${d.col}`);
+
+        nodeGs.append("rect").attr("class", "node-rect").attr("x", -20).attr("y", -12).attr("width", 40).attr("height", 24);
+        nodeGs.append("text").attr("class", "node-text").text(d => d.txt);
+
+        // --- ANIMACIJSKI STROJ (State Machine) ---
+        let state = 0;
+        
+        const descriptions = [
+            { t: "Korak 0: Začetni problem", d: "Imamo celoten vhodni signal <b>x[n]</b> v enem bloku velikosti N=8." },
+            { t: "Korak 1: Prva delitev (Divide)", d: "Signal razcepimo (ne računamo še ničesar!). <b>Sode indekse</b> (0,2,4,6) damo v zgornji blok, <b>lihe indekse</b> (1,3,5,7) pa v spodnji blok. Problem smo prepolovili." },
+            { t: "Korak 2: Druga delitev (Divide)", d: "Postopek ponovimo! Vsak blok (N=4) razcepimo na njegove lastne sode in lihe elemente. Pridemo do dnu: 4 trivialni bloki velikosti N=2. Opazite Bit-Reversal vrstni red!" },
+            { t: "Korak 3: Zmaga na dnu (Trivialne DFT-2)", d: "Ker je transformacija dveh točk samo seštevanje in odštevanje (X[0]=x[0]+x[1], X[1]=x[0]-x[1]), zlahka izračunamo rezultate. Postali smo v frekvenčni prostor (modre črte)." },
+            { t: "Korak 4: Prvo zlivanje (Conquer / Merge)", d: "Zdaj uporabimo rezultate manjših blokov, da sestavimo rešitve za večje. Prekrižani metuljčki združijo dva DFT-2 v en DFT-4. Tu se vključijo Twiddle faktorji (množenje)." },
+            { t: "Korak 5: Končno zlivanje (Conquer / Merge)", d: "Še zadnji korak! Dva izračunana bloka DFT-4 prekrižamo (z W₈ faktorji) in združimo v enoten končni DFT-8 izhod. Rešitev <b>X[k]</b> je urejena od 0 do 7." }
+        ];
+
+        function renderState(animDur = 600) {
+            document.getElementById("status-title").innerText = descriptions[state].t;
+            document.getElementById("status-desc").innerHTML = descriptions[state].d;
+            document.getElementById("btn-next").disabled = (state >= 5);
+            if(state >= 5) document.getElementById("btn-next").innerText = "Zaključeno";
+
+            // Prikazuj in skrivaj elemente glede na trenuten state
+            for (let c = 0; c <= 5; c++) {
+                let showCol = (c <= state);
+                d3.selectAll(`#node-c${c}`).transition().duration(animDur).style("opacity", showCol ? 1 : 0);
+                d3.selectAll(`#group-c${c}`).transition().duration(animDur).style("opacity", showCol ? 1 : 0);
+                d3.select(`#title-c${c}`).transition().duration(animDur).style("opacity", showCol ? 1 : 0);
+                
+                // Povezave med stolpcem (c) in (c+1) prikažemo, če smo dosegli state (c+1)
+                let showLinks = (state >= c + 1);
+                if (c < 2) d3.selectAll(`#link-div-c${c}`).transition().duration(animDur).style("opacity", showLinks ? 1 : 0);
+                if (c >= 2 && c < 5) d3.selectAll(`#link-conq-c${c}`).transition().duration(animDur).style("opacity", showLinks ? 1 : 0);
+            }
+        }
+
+        document.getElementById("btn-next").addEventListener("click", () => { if (state < 5) { state++; renderState(); } });
+        document.getElementById("btn-reset").addEventListener("click", () => {
+            state = 0;
+            document.getElementById("btn-next").disabled = false;
+            document.getElementById("btn-next").innerText = "Naslednji korak ➔";
+            renderState(0); // instant reset
+        });
+
+        // Zaženi prvi okvir
+        renderState(0);
+    </script>
+</body>
+</html>
