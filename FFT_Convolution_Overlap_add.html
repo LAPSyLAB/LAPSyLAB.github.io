@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="sl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Metoda Overlap-Add</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f9;
+            margin: 0;
+            padding: 10px 20px;
+            color: #333;
+        }
+        h1 { text-align: center; color: #2c3e50; margin-top: 5px; margin-bottom: 10px;}
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #e9ecef;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+        .status-box {
+            flex: 1;
+            margin-left: 20px;
+            padding: 10px;
+            background: #fff;
+            border-left: 4px solid #27ae60;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            background-color: #27ae60;
+            color: white;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        button:hover { background-color: #2ecc71; }
+        button:disabled { background-color: #bdc3c7; cursor: not-allowed; }
+        
+        .plot-row { display: flex; gap: 20px; margin-bottom: 15px; }
+        .plot-container { flex: 1; background-color: #fafafa; border: 1px solid #ddd; border-radius: 4px; padding-top: 5px; position: relative;}
+        
+        .axis line, .axis path { stroke: #ccc; }
+        
+        /* Stem plot styling */
+        .stem-line { stroke-width: 2; }
+        .stem-circle { stroke-width: 1; }
+        
+        h3 { margin: 5px 0 5px 10px; font-size: 14px; color: #34495e; }
+        .highlight-box { fill: #3498db; opacity: 0.15; }
+        .overlap-box { fill: #e74c3c; opacity: 0.2; }
+    </style>
+</head>
+<body>
+
+    <h1>Vizualizacija metode Overlap-Add</h1>
+    
+    <div class="container">
+        <div class="controls">
+            <div>
+                <button id="btn-next">Naslednji blok ➔</button>
+                <button id="btn-reset" style="background-color: #95a5a6; margin-left:5px;">Ponastavi</button>
+            </div>
+            
+            <div class="status-box">
+                <strong id="status-title">Korak 0: Priprava signalov</strong><br>
+                <span id="status-desc">Dolžina bloka L = 10, dolžina filtra M = 4. Izhod vsakega bloka bo dolg L + M - 1 = 13 vzorcev. Prekrivanje med bloki bo M - 1 = 3 vzorci.</span>
+            </div>
+        </div>
+
+        <div class="plot-row">
+            <div class="plot-container">
+                <h3>1. Vhodni signal x[n] (Razdeljen na bloke L=10)</h3>
+                <div id="plot-x"></div>
+            </div>
+            <div class="plot-container" style="flex: 0.4;">
+                <h3>2. Filter h[n] (M=4)</h3>
+                <div id="plot-h"></div>
+            </div>
+        </div>
+
+        <div class="plot-row">
+            <div class="plot-container">
+                <h3>3. Konvolucija trenutnega bloka (Dolžina = 13) <span style="color:#e74c3c; font-weight:normal; font-size:12px;">(Rdeče točke so 'rep', ki se bo prekril)</span></h3>
+                <div id="plot-block"></div>
+            </div>
+        </div>
+
+        <div class="plot-row">
+            <div class="plot-container">
+                <h3>4. Izhodni signal y[n] (Seštevanje blokov)</h3>
+                <div id="plot-y"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- PARAMETRI ---
+        const L = 10; // Dolžina bloka
+        const M = 4;  // Dolžina filtra
+        const numBlocks = 4;
+        const N = L * numBlocks; // Celotna dolžina signala
+        const outLen = N + M - 1; // Celotna dolžina izhoda
+
+        // --- PODATKI ---
+        // Vhodni signal (kombinacija sinusov, da izgleda zanimivo)
+        const x = Array.from({length: N}, (_, i) => {
+            let val = Math.sin(i * 0.4) + 0.5 * Math.sin(i * 0.1) + 0.2 * (Math.random() - 0.5);
+            return { n: i, val: val };
+        });
+
+        // Filter (enostaven trikotni filter za glajenje)
+        const h = [
+            { n: 0, val: 0.2 },
+            { n: 1, val: 0.5 },
+            { n: 2, val: 0.8 },
+            { n: 3, val: 0.3 }
+        ];
+
+        // Izhodni buffer
+        let y_acc = Array.from({length: outLen}, (_, i) => ({ n: i, val: 0 }));
+        
+        let currentBlock = -1;
+
+        // --- D3 SETUP ---
+        const wX = 600, hX = 120, margin = {top: 10, right: 20, bottom: 20, left: 40};
+        const wH = 250;
+        
+        // Funkcija za konvolucijo dveh nizov (samo array vrednosti)
+        function convolve(sig1, sig2) {
+            let len = sig1.length + sig2.length - 1;
+            let res = Array(len).fill(0);
+            for (let i = 0; i < sig1.length; i++) {
+                for (let j = 0; j < sig2.length; j++) {
+                    res[i + j] += sig1[i] * sig2[j];
+                }
+            }
+            return res;
+        }
+
+        // Pomožna funkcija za izris "Stem" (krožec na palčki) grafa
+        function createStemPlot(containerId, width, height, xDomain, yDomain, data, color) {
+            d3.select(containerId).selectAll("*").remove();
+            const svg = d3.select(containerId).append("svg")
+                .attr("width", "100%").attr("height", height)
+                .attr("viewBox", `0 0 ${width} ${height}`)
+                .append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+            
+            const innerW = width - margin.left - margin.right;
+            const innerH = height - margin.top - margin.bottom;
+
+            const scaleX = d3.scaleLinear().domain(xDomain).range([0, innerW]);
+            const scaleY = d3.scaleLinear().domain(yDomain).range([innerH, 0]);
+
+            // Osi
+            svg.append("g").attr("transform", `translate(0,${scaleY(0)})`).call(d3.axisBottom(scaleX).ticks(xDomain[1]/5));
+            svg.append("g").call(d3.axisLeft(scaleY).ticks(4));
+
+            // Skupina za "stems"
+            const stems = svg.append("g").attr("class", "stems");
+
+            function updateData(newData, animDuration = 0) {
+                const u = stems.selectAll(".stem").data(newData, d => d.n);
+
+                const enter = u.enter().append("g").attr("class", "stem");
+                
+                enter.append("line")
+                    .attr("class", "stem-line")
+                    .attr("x1", d => scaleX(d.n)).attr("x2", d => scaleX(d.n))
+                    .attr("y1", scaleY(0)).attr("y2", scaleY(0))
+                    .attr("stroke", d => d.color || color);
+                
+                enter.append("circle")
+                    .attr("class", "stem-circle")
+                    .attr("cx", d => scaleX(d.n)).attr("cy", scaleY(0))
+                    .attr("r", 3)
+                    .attr("fill", d => d.color || color)
+                    .attr("stroke", d => d.color || color);
+
+                const merge = enter.merge(u);
+
+                merge.select("line").transition().duration(animDuration)
+                    .attr("x1", d => scaleX(d.n)).attr("x2", d => scaleX(d.n))
+                    .attr("y1", scaleY(0)).attr("y2", d => scaleY(d.val))
+                    .attr("stroke", d => d.color || color);
+
+                merge.select("circle").transition().duration(animDuration)
+                    .attr("cx", d => scaleX(d.n)).attr("cy", d => scaleY(d.val))
+                    .attr("fill", d => d.color || color)
+                    .attr("stroke", d => d.color || color);
+
+                u.exit().remove();
+            }
+
+            // Prvi izris
+            updateData(data);
+
+            return { svg, scaleX, scaleY, updateData, innerH };
+        }
+
+        // Inicializacija grafov
+        const plotX = createStemPlot("#plot-x", wX, hX, [0, N], [-1.5, 1.5], x, "#34495e");
+        const plotH = createStemPlot("#plot-h", wH, hX, [0, M], [0, 1], h, "#8e44ad");
+        
+        // Prazna grafa za bloke in izhod
+        const plotBlock = createStemPlot("#plot-block", wX, hX, [0, outLen], [-2, 2], [], "#2980b9");
+        const plotY = createStemPlot("#plot-y", wX, hX+40, [0, outLen], [-2, 2], y_acc, "#27ae60");
+
+        // Dodajanje highlight kvadratov na grafe
+        const highlightX = plotX.svg.append("rect").attr("class", "highlight-box").attr("y", 0).attr("height", plotX.innerH).style("display", "none");
+        const highlightBlock = plotBlock.svg.append("rect").attr("class", "highlight-box").attr("y", 0).attr("height", plotBlock.innerH).style("display", "none");
+        const overlapBlock = plotBlock.svg.append("rect").attr("class", "overlap-box").attr("y", 0).attr("height", plotBlock.innerH).style("display", "none");
+        const highlightY = plotY.svg.append("rect").attr("class", "highlight-box").attr("y", 0).attr("height", plotY.innerH).style("display", "none");
+
+        // --- LOGIKA KORAKOV ---
+        function runStep() {
+            if (currentBlock >= numBlocks - 1) return;
+            currentBlock++;
+
+            const offset = currentBlock * L;
+            
+            // 1. Izreži trenutni blok vhodnega signala
+            const x_vals = x.slice(offset, offset + L).map(d => d.val);
+            const h_vals = h.map(d => d.val);
+            
+            // 2. Izračunaj konvolucijo
+            const y_conv = convolve(x_vals, h_vals); // dolžina = 13
+            
+            // Pripravi podatke za plot 3 (Trenutni blok)
+            // Barvanje: prvih L vzorcev modro, zadnji M-1 (rep) rdeče
+            const blockData = y_conv.map((val, i) => {
+                let isTail = i >= L;
+                return {
+                    n: offset + i,
+                    val: val,
+                    color: isTail ? "#e74c3c" : "#2980b9"
+                };
+            });
+
+            // 3. Dodaj v skupni akumulator (Overlap-Add math)
+            // Vzamemo staro vrednost, ji prištejemo novo in animiramo razliko!
+            const old_y_acc = JSON.parse(JSON.stringify(y_acc)); // deep copy za animacijo
+            
+            for(let i = 0; i < y_conv.length; i++) {
+                y_acc[offset + i].val += y_conv[i];
+            }
+
+            // --- ANIMACIJE ---
+            // A: Oznake na grafu 1
+            highlightX.style("display", "block").transition().duration(500)
+                .attr("x", plotX.scaleX(offset)).attr("width", plotX.scaleX(L) - plotX.scaleX(0));
+
+            // B: Izris bloka na grafu 3
+            highlightBlock.style("display", "block").transition().duration(500)
+                .attr("x", plotBlock.scaleX(offset)).attr("width", plotBlock.scaleX(L) - plotBlock.scaleX(0));
+            overlapBlock.style("display", "block").transition().duration(500)
+                .attr("x", plotBlock.scaleX(offset + L)).attr("width", plotBlock.scaleX(M-1) - plotBlock.scaleX(0));
+            
+            plotBlock.updateData(blockData, 500);
+
+            // C: Posodobitev in animacija izhoda (Graf 4)
+            highlightY.style("display", "block").transition().duration(500)
+                .attr("x", plotY.scaleX(offset)).attr("width", plotY.scaleX(L + M - 1) - plotY.scaleX(0));
+            
+            plotY.updateData(y_acc, 800);
+
+            // D: Posodobitev teksta
+            const title = document.getElementById("status-title");
+            const desc = document.getElementById("status-desc");
+            
+            title.innerText = `Korak ${currentBlock + 1}: Obdelava Bloka ${currentBlock}`;
+            if(currentBlock === 0) {
+                desc.innerHTML = `Vzeli smo prvih L=10 vzorcev. Naredili smo konvolucijo. Rep konvolucije (rdeče) sega <b>čez rob bloka</b> (v območje naslednjega). Zapisali smo ga v medpomnilnik.`;
+            } else {
+                desc.innerHTML = `Vzeli smo naslednji blok. OPAZUJTE GRAF 4! Nova konvolucija se prišteva k tistemu, kar je ostalo v medpomnilniku (rdečemu repu prejšnjega bloka). To je bistvo prekritja (Overlap)!`;
+            }
+
+            if (currentBlock >= numBlocks - 1) {
+                document.getElementById("btn-next").disabled = true;
+                document.getElementById("btn-next").innerText = "Konec";
+                title.innerText = "Zaključeno: Celoten signal obdelan!";
+                desc.innerHTML = "Staknili smo vse bloke in prekrivanja so bila sešteta. Dobili smo identičen rezultat, kot če bi naredili eno gigantsko konvolucijo celotnega signala.";
+            }
+        }
+
+        function reset() {
+            currentBlock = -1;
+            y_acc = Array.from({length: outLen}, (_, i) => ({ n: i, val: 0 }));
+            
+            highlightX.style("display", "none");
+            highlightBlock.style("display", "none");
+            overlapBlock.style("display", "none");
+            highlightY.style("display", "none");
+            
+            plotBlock.updateData([], 0);
+            plotY.updateData(y_acc, 500);
+
+            document.getElementById("btn-next").disabled = false;
+            document.getElementById("btn-next").innerText = "Naslednji blok ➔";
+            document.getElementById("status-title").innerText = "Korak 0: Priprava signalov";
+            document.getElementById("status-desc").innerText = "Dolžina bloka L = 10, dolžina filtra M = 4. Izhod vsakega bloka bo dolg L + M - 1 = 13 vzorcev. Prekrivanje med bloki bo M - 1 = 3 vzorci.";
+        }
+
+        document.getElementById("btn-next").addEventListener("click", runStep);
+        document.getElementById("btn-reset").addEventListener("click", reset);
+    </script>
+</body>
+</html>

@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="sl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Remezov algoritem z utežmi in dB skalo</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f9;
+            margin: 0;
+            padding: 10px 20px;
+            color: #333;
+        }
+        h1 { text-align: center; color: #2c3e50; margin-top: 5px; margin-bottom: 15px;}
+        .container {
+            max-width: 950px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #e9ecef;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        .status-box {
+            flex: 1;
+            min-width: 300px;
+            padding: 10px;
+            background: #fff;
+            border-left: 4px solid #3498db;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .weight-control {
+            background: #fff;
+            padding: 10px 15px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            font-weight: bold;
+        }
+        input[type="number"] {
+            width: 60px;
+            padding: 5px;
+            font-size: 16px;
+            margin-left: 10px;
+        }
+        button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            background-color: #3498db;
+            color: white;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        button:hover { background-color: #2980b9; }
+        button:disabled { background-color: #bdc3c7; cursor: not-allowed; }
+        
+        svg { background-color: #fafafa; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 5px; }
+        .axis line, .axis path { stroke: #ccc; }
+        .grid line { stroke: #eee; }
+        
+        .line-ideal { fill: none; stroke: #2ecc71; stroke-width: 2; stroke-dasharray: 5,5; }
+        .line-filter { fill: none; stroke: #2980b9; stroke-width: 2; }
+        .line-filter-db { fill: none; stroke: #8e44ad; stroke-width: 2; }
+        .line-error-w { fill: none; stroke: #e74c3c; stroke-width: 2.5; }
+        .line-error-u { fill: none; stroke: #f39c12; stroke-width: 2; stroke-dasharray: 6,4; }
+        
+        .dot-extrema { fill: #c0392b; stroke: #fff; stroke-width: 1.5; }
+        
+        h3 { margin-bottom: 5px; margin-top: 15px; font-size: 16px; color: #34495e; display: flex; justify-content: space-between; align-items: center;}
+        .legend { font-size: 12px; font-weight: normal; }
+        .legend span { margin-left: 15px; }
+        .leg-w { color: #e74c3c; font-weight: bold; }
+        .leg-u { color: #f39c12; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <h1>Remezov algoritem izmenjave z utežmi in dB skalo</h1>
+    
+    <div class="container">
+        <div class="controls">
+            <div class="weight-control">
+                <label>Utež zapornega pasu (W<sub>s</sub>): 
+                    <input type="number" id="input-weight" value="10" min="1" max="50" step="1">
+                </label>
+                <div style="font-size:12px; color:#7f8c8d; margin-top:5px; font-weight:normal;">(Utež prepustnega W<sub>p</sub> = 1)</div>
+            </div>
+            
+            <div>
+                <button id="btn-next">Naslednji korak ➔</button>
+                <button id="btn-reset" style="background-color: #95a5a6; margin-left:5px;">Ponastavi</button>
+            </div>
+            
+            <div class="status-box">
+                <strong id="status-title">Korak 0: Začetno stanje</strong><br>
+                <span id="status-desc">Izbrali smo enakomerno mrežo frekvenc. Spremenite utež in opazujte, kako algoritem minimizira uteženo napako!</span>
+            </div>
+        </div>
+
+        <h3 style="margin-top: 0;">1. Amplitudni odziv |H(ω)| (Linearna skala)</h3>
+        <div id="plot-amp"></div>
+        
+        <h3>2. Amplitudni odziv 20·log₁₀|H(ω)| (dB skala)</h3>
+        <div id="plot-amp-db"></div>
+
+        <h3>
+            3. Funkcija napake
+            <div class="legend">
+                <span><b class="leg-w">——</b> Utežena napaka E<sub>w</sub>(ω)</span>
+                <span><b class="leg-u">- - -</b> Neutežena (dejanska) napaka E(ω)</span>
+            </div>
+        </h3>
+        <div id="plot-err"></div>
+    </div>
+
+    <script>
+        // Višine grafov so zmanjšane, da gre vse na zaslon
+        const width = 910, height = 180;
+        const margin = {top: 15, right: 30, bottom: 25, left: 50};
+        const innerW = width - margin.left - margin.right;
+        const innerH = height - margin.top - margin.bottom;
+
+        // Skala za os X (skupna vsem)
+        const scaleW = d3.scaleLinear().domain([0, 1]).range([0, innerW]);
+        
+        const wp = 0.4; 
+        const ws = 0.6; 
+        const res = 400;
+        const numRipplesP = 4; 
+        const numRipplesS = 4; 
+
+        // Globalne spremenljivke za podatke
+        let dataIdeal = [], dataCurve0 = [], dataCurve1 = [], dataCurve2 = [];
+        let err0 = [], err1 = [], err2 = [];
+        let ext0, ext1, ext2, naiveExtrema;
+        let currentState = 0;
+
+        function generateData(weightS) {
+            dataIdeal = []; dataCurve0 = []; dataCurve1 = []; dataCurve2 = [];
+            const delta = 0.08; 
+
+            for(let i=0; i<=res; i++){
+                let w = i/res;
+                dataIdeal.push({w: w, val: (w <= wp) ? 1 : ((w >= ws) ? 0 : null)});
+
+                // Stanje 0: Gibbs
+                let val0 = 0;
+                if(w <= wp) {
+                    let env = 0.02 + 0.15 * Math.pow(w/wp, 3);
+                    val0 = 1 + env * Math.cos(w * Math.PI * numRipplesP / wp);
+                } else if (w >= ws) {
+                    let env = (0.02 + 0.15 * Math.pow((1-w)/(1-ws), 3)) / weightS;
+                    val0 = 0 + env * Math.cos((w-ws) * Math.PI * numRipplesS / (1-ws));
+                } else {
+                    let t = (w-wp)/(ws-wp);
+                    val0 = (1-t)*(1+0.17) + t*(-0.17/weightS); 
+                }
+                dataCurve0.push({w: w, val: val0});
+
+                // Stanje 2: Equiripple (končno stanje)
+                let val2 = 0;
+                if(w <= wp) {
+                    val2 = 1 + delta * Math.cos(w * Math.PI * numRipplesP / wp);
+                } else if (w >= ws) {
+                    val2 = 0 + (delta / weightS) * Math.cos((w-ws) * Math.PI * numRipplesS / (1-ws));
+                } else {
+                    let t = (w-wp)/(ws-wp);
+                    val2 = (1-t)*(1+delta) + t*(-delta/weightS);
+                }
+                dataCurve2.push({w: w, val: val2});
+
+                // Stanje 1: Interpolacija med 0 in 2
+                dataCurve1.push({w: w, val: (val0 * 0.4) + (val2 * 0.6)});
+            }
+
+            const calcErrors = (curve) => {
+                return curve.map(d => {
+                    let errU = 0, errW = 0;
+                    if (d.w <= wp) {
+                        errU = d.val - 1;
+                        errW = errU * 1; 
+                    } else if (d.w >= ws) {
+                        errU = d.val - 0;
+                        errW = errU * weightS; 
+                    }
+                    return { w: d.w, errU: errU, errW: errW };
+                });
+            };
+
+            err0 = calcErrors(dataCurve0);
+            err1 = calcErrors(dataCurve1);
+            err2 = calcErrors(dataCurve2);
+
+            const findExtrema = (errData) => {
+                let ext = [0, wp, ws, 1];
+                for(let i=1; i<errData.length-1; i++) {
+                    let w = errData[i].w;
+                    if ((w > 0 && w < wp) || (w > ws && w < 1)) {
+                        let e_curr = errData[i].errW, e_prev = errData[i-1].errW, e_next = errData[i+1].errW;
+                        if ((e_curr > e_prev && e_curr > e_next) || (e_curr < e_prev && e_curr < e_next)) {
+                            ext.push(w);
+                        }
+                    }
+                }
+                return ext.sort((a,b) => a-b);
+            };
+
+            ext0 = findExtrema(err0);
+            ext1 = findExtrema(err1);
+            ext2 = findExtrema(err2);
+
+            naiveExtrema = [];
+            for(let i=0; i<=numRipplesP; i++) naiveExtrema.push(i * wp / numRipplesP);
+            for(let i=0; i<=numRipplesS; i++) naiveExtrema.push(ws + i * (1-ws) / numRipplesS);
+        }
+
+        // --- IZRIS GRAFOV ---
+        function createSvg(containerId, yDomain, ticks=5) {
+            d3.select(containerId).selectAll("*").remove(); 
+            const svg = d3.select(containerId).append("svg")
+                .attr("width", width).attr("height", height)
+                .append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+            
+            const scaleY = d3.scaleLinear().domain(yDomain).range([innerH, 0]);
+            
+            svg.append("g").attr("transform", `translate(0,${innerH})`)
+               .call(d3.axisBottom(scaleW).tickValues([0, wp, ws, 1]).tickFormat(d => d==0?"0":d==1?"π":d+"π"));
+            svg.append("g").call(d3.axisLeft(scaleY).ticks(ticks));
+            svg.append("g").attr("class", "grid").call(d3.axisLeft(scaleY).tickSize(-innerW).tickFormat("").ticks(ticks));
+            
+            svg.append("line").attr("x1", scaleW(wp)).attr("x2", scaleW(wp)).attr("y1", 0).attr("y2", innerH).attr("stroke", "#eee");
+            svg.append("line").attr("x1", scaleW(ws)).attr("x2", scaleW(ws)).attr("y1", 0).attr("y2", innerH).attr("stroke", "#eee");
+
+            return {svg, scaleY};
+        }
+
+        let plotAmp, plotAmpDb, plotErr;
+        let pathFilter, pathFilterDb, pathErrorW, pathErrorU, dotsErr, dotsAmp, dotsAmpDb;
+
+        function initPlots() {
+            plotAmp = createSvg("#plot-amp", [-0.2, 1.2]);
+            plotAmpDb = createSvg("#plot-amp-db", [-80, 5], 6); // Skala od -80 dB do 5 dB
+            plotErr = createSvg("#plot-err", [-0.2, 0.2]);
+
+            // Idealna linija (Linearna)
+            const lineIdeal = d3.line().defined(d => d.val !== null).x(d => scaleW(d.w)).y(d => plotAmp.scaleY(d.val));
+            plotAmp.svg.append("path").datum(dataIdeal).attr("class", "line-ideal").attr("d", lineIdeal);
+
+            // Idealna linija (dB)
+            const lineIdealDb = d3.line().defined(d => d.val !== null).x(d => scaleW(d.w)).y(d => {
+                if (d.w <= wp) return plotAmpDb.scaleY(0); // Prepustni = 0 dB
+                if (d.w >= ws) return plotAmpDb.scaleY(-80); // Zaporni = -80 dB (na dnu grafa)
+                return plotAmpDb.scaleY(0);
+            });
+            plotAmpDb.svg.append("path").datum(dataIdeal).attr("class", "line-ideal").attr("d", lineIdealDb);
+
+            pathFilter = plotAmp.svg.append("path").attr("class", "line-filter");
+            pathFilterDb = plotAmpDb.svg.append("path").attr("class", "line-filter-db");
+            pathErrorU = plotErr.svg.append("path").attr("class", "line-error-u"); 
+            pathErrorW = plotErr.svg.append("path").attr("class", "line-error-w"); 
+            
+            // Skupine za rdeče točke na vseh grafih
+            dotsAmp = plotAmp.svg.append("g");
+            dotsAmpDb = plotAmpDb.svg.append("g");
+            dotsErr = plotErr.svg.append("g");
+        }
+
+        function updatePlots(curveData, errData, extremaWs, duration=1000) {
+            // Generiranje linearnih točk
+            const lineGenFilter = d3.line().x(d => scaleW(d.w)).y(d => plotAmp.scaleY(d.val));
+            
+            // Generiranje dB točk (pretvorba v logaritemsko skalo)
+            const lineGenFilterDb = d3.line().x(d => scaleW(d.w)).y(d => {
+                let db = 20 * Math.log10(Math.max(Math.abs(d.val), 1e-6));
+                return plotAmpDb.scaleY(Math.max(db, -80)); // Omejimo spodnji del na -80 dB
+            });
+
+            const lineGenErrW = d3.line().defined(d => d.errW !== 0).x(d => scaleW(d.w)).y(d => plotErr.scaleY(d.errW));
+            const lineGenErrU = d3.line().defined(d => d.errU !== 0).x(d => scaleW(d.w)).y(d => plotErr.scaleY(d.errU));
+
+            // Animirano posodabljanje vseh krivulj
+            pathFilter.datum(curveData).transition().duration(duration).attr("d", lineGenFilter);
+            pathFilterDb.datum(curveData).transition().duration(duration).attr("d", lineGenFilterDb);
+            pathErrorW.datum(errData).transition().duration(duration).attr("d", lineGenErrW);
+            pathErrorU.datum(errData).transition().duration(duration).attr("d", lineGenErrU);
+
+            // Točke za napako
+            let pointsErr = extremaWs.map(w => {
+                let d = errData.reduce((prev, curr) => Math.abs(curr.w - w) < Math.abs(prev.w - w) ? curr : prev);
+                return {w: d.w, y: d.errW};
+            });
+            
+            // Točke za linearno amplitudo
+            let pointsAmp = extremaWs.map(w => {
+                let d = curveData.reduce((prev, curr) => Math.abs(curr.w - w) < Math.abs(prev.w - w) ? curr : prev);
+                return {w: d.w, y: d.val};
+            });
+            
+            // Točke za dB amplitudo
+            let pointsAmpDb = extremaWs.map(w => {
+                let d = curveData.reduce((prev, curr) => Math.abs(curr.w - w) < Math.abs(prev.w - w) ? curr : prev);
+                let db = 20 * Math.log10(Math.max(Math.abs(d.val), 1e-6));
+                return {w: d.w, y: Math.max(db, -80)};
+            });
+
+            // Risanje točk na graf napake
+            const uErr = dotsErr.selectAll("circle").data(pointsErr);
+            uErr.enter().append("circle").attr("class", "dot-extrema").attr("r", 5)
+                .merge(uErr).transition().duration(duration)
+                .attr("cx", d => scaleW(d.w)).attr("cy", d => plotErr.scaleY(d.y));
+            uErr.exit().remove();
+            
+            // Risanje točk na linearni graf amplitude
+            const uAmp = dotsAmp.selectAll("circle").data(pointsAmp);
+            uAmp.enter().append("circle").attr("class", "dot-extrema").attr("r", 5)
+                .merge(uAmp).transition().duration(duration)
+                .attr("cx", d => scaleW(d.w)).attr("cy", d => plotAmp.scaleY(d.y));
+            uAmp.exit().remove();
+            
+            // Risanje točk na dB graf amplitude
+            const uAmpDb = dotsAmpDb.selectAll("circle").data(pointsAmpDb);
+            uAmpDb.enter().append("circle").attr("class", "dot-extrema").attr("r", 5)
+                .merge(uAmpDb).transition().duration(duration)
+                .attr("cx", d => scaleW(d.w)).attr("cy", d => plotAmpDb.scaleY(d.y));
+            uAmpDb.exit().remove();
+        }
+
+        const descriptions = [
+            { t: "Korak 0: Začetno stanje", d: "Poglejte graf 2 (dB)! Ne glede na to, da je valovanje v linearni skali skoraj nevidno, nam dB skala jasno pokaže, kako 'plitvo' je trenutno dušenje." },
+            { t: "Korak 1: Iskanje dejanskih ekstremov (Exchange)", d: "Algoritem premakne točke natančno na vrhove trenutne UTEŽENE napake (graf 3). Točke se hkrati prikažejo na dejanskem filtru (grafa 1 in 2)." },
+            { t: "Korak 2: Izračun novega polinoma", d: "Izračuna se nov filter. Bodite pozorni, kako se dušenje v dB skali na grafu 2 začne poglabljati proti -40 dB ali več (odvisno od uteži)!" },
+            { t: "Korak 3: Ponovno iskanje ekstremov", d: "Zaradi nove krivulje so se vrhovi spet malo premaknili. Algoritem osveži pozicije." },
+            { t: "Korak 4: Konvergenca (Equiripple)", d: "Končano! Kljub temu da sta v prepustnem in zapornem pasu valovanji različni, so v dB skali vsi vrhovi na popolnoma enaki ravni (konstantno dušenje)!" }
+        ];
+
+        function renderState() {
+            const btn = document.getElementById("btn-next");
+            document.getElementById("status-title").innerText = descriptions[currentState].t;
+            document.getElementById("status-desc").innerText = descriptions[currentState].d;
+
+            if(currentState === 0) updatePlots(dataCurve0, err0, naiveExtrema, 0);
+            else if(currentState === 1) updatePlots(dataCurve0, err0, ext0, 1500);
+            else if(currentState === 2) updatePlots(dataCurve1, err1, ext0, 1500);
+            else if(currentState === 3) updatePlots(dataCurve1, err1, ext1, 1500);
+            else if(currentState === 4) {
+                updatePlots(dataCurve2, err2, ext2, 1500);
+                btn.disabled = true;
+                btn.innerText = "Zaključeno";
+            }
+        }
+
+        // --- DOGODKI (Events) ---
+        function resetSimulation() {
+            let weight = parseFloat(document.getElementById("input-weight").value) || 10;
+            generateData(weight);
+            initPlots();
+            currentState = 0;
+            document.getElementById("btn-next").disabled = false;
+            document.getElementById("btn-next").innerText = "Naslednji korak ➔";
+            renderState();
+        }
+
+        document.getElementById("btn-next").addEventListener("click", () => {
+            if(currentState < 4) { currentState++; renderState(); }
+        });
+        document.getElementById("btn-reset").addEventListener("click", resetSimulation);
+        document.getElementById("input-weight").addEventListener("change", resetSimulation);
+
+        // Zagon (Privzeto Ws = 10)
+        document.getElementById("input-weight").value = 10;
+        resetSimulation();
+    </script>
+</body>
+</html>
